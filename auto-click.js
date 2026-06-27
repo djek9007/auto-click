@@ -644,18 +644,18 @@ async function pollTelegram() {
         await answerCallbackQuery(callbackId, '⏳ Выполняю...');
 
         switch (cbData) {
-          case 'start':     await handleStart(chatId, msgId); break;
-          case 'stop':      await handleStop(chatId, msgId); break;
-          case 'status':    await handleStatus(chatId, msgId); break;
-          case 'stats':     await handleStats(chatId, msgId); break;
-          case 'restart':   await handleRestart(chatId, msgId); break;
-          case 'menu':      await handleShowMenu(chatId, msgId); break;
-          case 'instances': await handleInstances(chatId, msgId); break;
-          case 'kill_all_others': await handleKillOthers(chatId, msgId); break;
+          case 'start':     handleStart(chatId, msgId).catch(err => log('Callback start error:', err.message)); break;
+          case 'stop':      handleStop(chatId, msgId).catch(err => log('Callback stop error:', err.message)); break;
+          case 'status':    handleStatus(chatId, msgId).catch(err => log('Callback status error:', err.message)); break;
+          case 'stats':     handleStats(chatId, msgId).catch(err => log('Callback stats error:', err.message)); break;
+          case 'restart':   handleRestart(chatId, msgId).catch(err => log('Callback restart error:', err.message)); break;
+          case 'menu':      handleShowMenu(chatId, msgId).catch(err => log('Callback menu error:', err.message)); break;
+          case 'instances': handleInstances(chatId, msgId).catch(err => log('Callback instances error:', err.message)); break;
+          case 'kill_all_others': handleKillOthers(chatId, msgId).catch(err => log('Callback kill_all_others error:', err.message)); break;
           default:
             if (cbData.startsWith('kill_')) {
               const pid = parseInt(cbData.slice(5));
-              await handleKillPid(chatId, msgId, pid);
+              handleKillPid(chatId, msgId, pid).catch(err => log('Callback kill_pid error:', err.message));
             }
         }
         continue;
@@ -674,20 +674,20 @@ async function pollTelegram() {
       log('Telegram command:', text, 'from:', msg.chat.id);
 
       if (text === '/start' || text === 'start' || text === 'меню' || text === 'menu') {
-        await handleShowMenu(msg.chat.id);
+        handleShowMenu(msg.chat.id).catch(err => log('Text start error:', err.message));
       } else if (text === '/stop' || text === 'stop' || text === '⏹ остановить') {
-        await handleStop(msg.chat.id);
+        handleStop(msg.chat.id).catch(err => log('Text stop error:', err.message));
       } else if (text === '/status' || text === 'status' || text === '📊 статус') {
-        await handleStatus(msg.chat.id);
+        handleStatus(msg.chat.id).catch(err => log('Text status error:', err.message));
       } else if (text === '/stats' || text === 'stats' || text === '📈 статистика' || text === '/statistic') {
-        await handleStats(msg.chat.id);
+        handleStats(msg.chat.id).catch(err => log('Text stats error:', err.message));
       } else if (text === '/restart' || text === 'restart' || text === '🔄 перезапустить') {
-        await handleRestart(msg.chat.id);
+        handleRestart(msg.chat.id).catch(err => log('Text restart error:', err.message));
       } else if (text === '/menu' || text === 'menu' || text === '⚙️ меню') {
-        await handleShowMenu(msg.chat.id);
+        handleShowMenu(msg.chat.id).catch(err => log('Text menu error:', err.message));
       } else {
         // Любое другое сообщение — просто показываем меню в чистоте (без дубликатов)
-        await handleShowMenu(msg.chat.id);
+        handleShowMenu(msg.chat.id).catch(err => log('Text default error:', err.message));
       }
     }
   } catch (err) {
@@ -724,9 +724,15 @@ async function startTelegramPolling() {
   }
 
   const poll = async () => {
-    await pollTelegram();
+    let delay = 100;
+    try {
+      await pollTelegram();
+    } catch (err) {
+      log('Ошибка опроса Telegram, повтор через 3 сек:', err.message);
+      delay = 3000;
+    }
     if (!state.shutdownRequested) {
-      telegramPollTimer = setTimeout(poll, 3000);
+      telegramPollTimer = setTimeout(poll, delay);
     }
   };
   await poll();
