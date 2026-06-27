@@ -987,6 +987,24 @@ async function fillLoginForm(page) {
     await sleep(1000);
   }
 
+  // Диагностика: если полей нет, смотрим что внутри страницы
+  const inputCount = await page.$$('input').then(el => el.length).catch(() => 0);
+  if (inputCount === 0) {
+    const diag = await page.evaluate(() => {
+      const f = document.querySelector('form');
+      return {
+        forms: document.forms.length,
+        hasForm: !!f,
+        formAction: f ? f.action : null,
+        formHtml: f ? f.innerHTML.slice(0, 500) : null,
+        bodyHtml: document.body ? document.body.innerHTML.slice(0, 1000) : null,
+        iframes: document.querySelectorAll('iframe').length,
+        shadowRoots: [...document.querySelectorAll('*')].filter(el => el.shadowRoot).length,
+      };
+    }).catch(() => ({}));
+    log('Диагностика формы:', JSON.stringify(diag, null, 2).slice(0, 800));
+  }
+
   // Логируем поля на странице для диагностики
   const pageInputs = await page.evaluate(() => {
     return [...document.querySelectorAll('input')].map(i => ({
