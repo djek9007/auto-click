@@ -111,14 +111,21 @@ function formatDuration(ms) {
 // Главное меню
 const BOT_COMMANDS = '/start — Показать меню\n/stop — Остановить\n/status — Статус\n/stats — Статистика\n/restart — Перезапустить';
 
-const MAIN_KEYBOARD = [
-  [{ text: '▶️ Запустить',    callback_data: 'start' }],
-  [{ text: '⏹ Остановить',    callback_data: 'stop' }],
-  [{ text: '📊 Статус',       callback_data: 'status' }],
-  [{ text: '📈 Статистика',   callback_data: 'stats' }],
-  [{ text: '🔄 Перезапустить', callback_data: 'restart' }],
-  [{ text: '🖥️ Процессы',     callback_data: 'instances' }],
-];
+function getKeyboard() {
+  if (state.isRunning) {
+    return [
+      [{ text: '⏹ Остановить учёт',    callback_data: 'stop' }],
+      [{ text: '📊 Обновить статус',    callback_data: 'status' }, { text: '📈 Статистика с сайта', callback_data: 'stats' }],
+      [{ text: '🔄 Перезапустить',     callback_data: 'restart' }, { text: '🖥️ Активные процессы', callback_data: 'instances' }],
+    ];
+  } else {
+    return [
+      [{ text: '▶️ Запустить учёт',    callback_data: 'start' }],
+      [{ text: '📊 Обновить статус',    callback_data: 'status' }],
+      [{ text: '🖥️ Активные процессы', callback_data: 'instances' }],
+    ];
+  }
+}
 
 function getBrowserStatus() {
   if (state.browser && state.page) return '✅ Браузер работает';
@@ -154,17 +161,21 @@ async function sendMainMenu(chatId, extraText, messageId) {
   let text = extraText ? extraText + '\n\n' : '';
   text += getStatusText();
   
-  const editId = messageId || state.lastMenuMessageId;
-  let success = false;
-  
-  if (editId) {
-    success = await editTelegramMessage(chatId, editId, text, MAIN_KEYBOARD);
+  if (messageId) {
+    const success = await editTelegramMessage(chatId, messageId, text, getKeyboard());
+    if (success) {
+      state.lastMenuMessageId = messageId;
+      saveSession();
+      return;
+    }
   }
   
-  if (!success) {
-    const newId = await sendTelegramMessage(chatId, text, MAIN_KEYBOARD);
-    if (newId) { state.lastMenuMessageId = newId; saveSession(); }
+  if (state.lastMenuMessageId) {
+    await deleteTelegramMessage(chatId, state.lastMenuMessageId).catch(() => {});
   }
+  
+  const newId = await sendTelegramMessage(chatId, text, getKeyboard());
+  if (newId) { state.lastMenuMessageId = newId; saveSession(); }
 }
 
 async function handleStart(chatId, messageId) {
@@ -186,18 +197,23 @@ async function handleStart(chatId, messageId) {
 
 async function handleShowMenu(chatId, messageId) {
   const welcome = !state.isRunning
-    ? '🤖 <b>AutoClick</b>\n\nСкрипт запущен и ждёт команды.\nНажмите <b>▶️ Запустить</b> чтобы начать учёт времени.\n\n' + BOT_COMMANDS
+    ? '🤖 <b>AutoClick</b>\n\nСкрипт запущен и ждёт команды.\nНажмите <b>▶️ Запустить учёт</b> чтобы начать учёт времени.\n\n' + BOT_COMMANDS
     : null;
   if (welcome) {
-    const editId = messageId || state.lastMenuMessageId;
-    let success = false;
-    if (editId) {
-      success = await editTelegramMessage(chatId, editId, welcome, MAIN_KEYBOARD);
+    if (messageId) {
+      const success = await editTelegramMessage(chatId, messageId, welcome, getKeyboard());
+      if (success) {
+        state.lastMenuMessageId = messageId;
+        saveSession();
+        return;
+      }
     }
-    if (!success) {
-      const newId = await sendTelegramMessage(chatId, welcome, MAIN_KEYBOARD);
-      if (newId) { state.lastMenuMessageId = newId; saveSession(); }
+    
+    if (state.lastMenuMessageId) {
+      await deleteTelegramMessage(chatId, state.lastMenuMessageId).catch(() => {});
     }
+    const newId = await sendTelegramMessage(chatId, welcome, getKeyboard());
+    if (newId) { state.lastMenuMessageId = newId; saveSession(); }
   } else {
     await sendMainMenu(chatId, null, messageId);
   }
@@ -376,8 +392,8 @@ async function handleStats(chatId, messageId) {
   };
 
   if (!state.page) {
-    text += '❌ Браузер не запущен.\nСначала нажмите <b>▶️ Запустить</b>';
-    await reply(text, MAIN_KEYBOARD);
+    text += '❌ Браузер не запущен.\nСначала нажмите <b>▶️ Запустить учёт</b>';
+    await reply(text, getKeyboard());
     return;
   }
 
@@ -392,7 +408,7 @@ async function handleStats(chatId, messageId) {
     if (!isLoggedIn) {
       text += '⚠️ Сессия истекла. Статистика недоступна до перезапуска учёта.\n' +
               'Нажмите <b>🔄 Перезапустить</b> для входа заново.';
-      await reply(text, MAIN_KEYBOARD);
+      await reply(text, getKeyboard());
       return;
     }
 
@@ -418,7 +434,7 @@ async function handleStats(chatId, messageId) {
       await takeScreenshot(state.page, 'stats_no_data');
       text += '⚠️ Данные статистики не обнаружены.\n\n<b>Текст страницы:</b>\n<code>';
       text += (rawText || '—').slice(0, 400) + '</code>';
-      await reply(text, MAIN_KEYBOARD);
+      await reply(text, getKeyboard());
       return;
     }
 
@@ -477,7 +493,7 @@ async function handleStats(chatId, messageId) {
     text += '❌ Ошибка: ' + err.message;
   }
 
-  await reply(text, MAIN_KEYBOARD);
+  await reply(text, getKeyboard());
 }
 
 // ─── Telegram API ──────────────────────────────────────────────────────────────
@@ -547,7 +563,21 @@ async function editTelegramMessage(chatId, messageId, text, keyboard) {
   }
 }
 
-const MENU_KEYBOARD = MAIN_KEYBOARD;
+async function deleteTelegramMessage(chatId, messageId) {
+  if (!CONFIG.telegramToken || !chatId || !messageId) return false;
+  try {
+    const resp = await fetch(`${TELEGRAM_API}/deleteMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, message_id: messageId }),
+    });
+    const r = await resp.json();
+    return r.ok;
+  } catch (err) {
+    log('Telegram delete error:', err.message);
+    return false;
+  }
+}
 
 async function answerCallbackQuery(callbackId, text) {
   if (!CONFIG.telegramToken || !callbackId) return;
@@ -656,15 +686,8 @@ async function pollTelegram() {
       } else if (text === '/menu' || text === 'menu' || text === '⚙️ меню') {
         await handleShowMenu(msg.chat.id);
       } else {
-        // Любое сообщение — показываем меню с кнопками
-        if (state.isRunning) {
-          await sendMainMenu(msg.chat.id);
-        } else {
-          await sendTelegramMessage(msg.chat.id,
-            '🤖 <b>AutoClick</b>\n\nСкрипт запущен и ждёт команды.\nНажмите <b>▶️ Запустить</b> чтобы начать учёт времени.\n\n' + BOT_COMMANDS,
-            MAIN_KEYBOARD
-          );
-        }
+        // Любое другое сообщение — просто показываем меню в чистоте (без дубликатов)
+        await handleShowMenu(msg.chat.id);
       }
     }
   } catch (err) {
@@ -688,14 +711,14 @@ async function startTelegramPolling() {
   if (state.telegramChatId) {
     const msg =
       '🤖 <b>AutoClick</b> запущен и ждёт команды.\n\n' +
-      'Нажмите <b>▶️ Запустить</b> чтобы начать учёт времени.\n' +
+      'Нажмите <b>▶️ Запустить учёт</b> чтобы начать учёт времени.\n' +
       'Настройки: ' + CONFIG.maxHours + ' часов, интервал ' + CONFIG.minIntervalMin + '-' + CONFIG.maxIntervalMin + ' мин.';
     let success = false;
     if (state.lastMenuMessageId) {
-      success = await editTelegramMessage(state.telegramChatId, state.lastMenuMessageId, msg, MENU_KEYBOARD);
+      success = await editTelegramMessage(state.telegramChatId, state.lastMenuMessageId, msg, getKeyboard());
     }
     if (!success) {
-      const newId = await sendTelegramMessage(state.telegramChatId, msg, MENU_KEYBOARD);
+      const newId = await sendTelegramMessage(state.telegramChatId, msg, getKeyboard());
       if (newId) { state.lastMenuMessageId = newId; saveSession(); }
     }
   }
@@ -1551,7 +1574,7 @@ async function stopAutoClick() {
 async function sendStartupMenu() {
   if (!state.telegramChatId || !CONFIG.telegramToken) return;
   const text = '🔄 <b>AutoClick перезапущен</b>\n\n' + getStatusText();
-  const newId = await sendTelegramMessage(state.telegramChatId, text, MAIN_KEYBOARD);
+  const newId = await sendTelegramMessage(state.telegramChatId, text, getKeyboard());
   if (newId) { state.lastMenuMessageId = newId; saveSession(); }
 }
 
