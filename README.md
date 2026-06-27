@@ -1,12 +1,38 @@
-# AutoClick — Автоматическая активность на Tomorrow School Dashboard
+# AutoClick — Tomorrow School Dashboard Automation
 
-> Скрипт сам логинится на dashboard.tomorrow-school.ai, запускает учёт времени
+> Скрипт логинится на dashboard.tomorrow-school.ai, запускает учёт времени
 > и имитирует активность (скролл + клики) каждые 5–12 минут.
 > Управление через Telegram бота.
 
 ---
 
-## 🚀 Быстрый старт (рекомендуемый способ)
+## 📦 Установка
+
+### Способ 1 — git clone (рекомендуется)
+
+```bash
+git clone git@github.com:djek9007/auto-click.git
+cd auto-click
+npm install
+```
+
+Создайте `.env` файл в папке с проектом:
+
+```env
+EMAIL=your@email.com
+PASSWORD=your_password
+TELEGRAM_TOKEN=your_bot_token_from_@BotFather
+```
+
+Запуск:
+
+```bash
+bash start.sh
+# или напрямую:
+node auto-click.js
+```
+
+### Способ 2 — системная установка (автозапуск при загрузке)
 
 Установить и забыть:
 
@@ -141,19 +167,18 @@ kill $(pgrep -f auto-click)
 
 ## 🔧 Настройка
 
-Если нужно сменить аккаунт — откройте `auto-click.js` и найдите в самом начале блок:
+Все настройки передаются через переменные среды или `.env` файл в папке проекта:
 
-```javascript
-const CREDENTIALS = {
-  email:          'ваш email',
-  password:       'ваш пароль',
-  telegramToken:  'токен бота',
-};
+```bash
+# Создайте файл .env:
+EMAIL=your@email.com
+PASSWORD=your_password
+TELEGRAM_TOKEN=токен_бота_от_@BotFather
 ```
 
-Можно также передать через переменные среды (они приоритетнее):
+Или через командную строку:
 ```bash
-EMAIL=other@email.com PASSWORD=other_pass node auto-click.js
+EMAIL=my@email.com PASSWORD=pass TELEGRAM_TOKEN=токен node auto-click.js
 ```
 
 ### Дополнительные настройки
