@@ -117,12 +117,13 @@ function getKeyboard() {
       [{ text: '⏹ Остановить учёт',    callback_data: 'stop' }],
       [{ text: '📊 Обновить статус',    callback_data: 'status' }, { text: '📈 Статистика с сайта', callback_data: 'stats' }],
       [{ text: '🔄 Перезапустить',     callback_data: 'restart' }, { text: '🖥️ Активные процессы', callback_data: 'instances' }],
+      [{ text: '🔽 Обновить код',      callback_data: 'update_code' }],
     ];
   } else {
     return [
       [{ text: '▶️ Запустить учёт',    callback_data: 'start' }],
       [{ text: '📊 Обновить статус',    callback_data: 'status' }],
-      [{ text: '🖥️ Активные процессы', callback_data: 'instances' }],
+      [{ text: '🖥️ Активные процессы', callback_data: 'instances' }, { text: '🔽 Обновить код', callback_data: 'update_code' }],
     ];
   }
 }
@@ -376,6 +377,91 @@ async function handleRestart(chatId, messageId) {
   });
 }
 
+async function handleUpdateCode(chatId, msgId) {
+  let statusMsgId = null;
+  const steps = [
+    'Получение свежего кода из репозитория (git pull)',
+    'Установка npm-пакетов (npm install)',
+    'Скачивание Chrome для Puppeteer'
+  ];
+
+  const renderText = (currentStepIndex, statusText) => {
+    let t = '<b>🔄 Обновление AutoClick</b>\n\n';
+    for (let i = 0; i < steps.length; i++) {
+      if (i < currentStepIndex) {
+        t += `✅ ${steps[i]}\n`;
+      } else if (i === currentStepIndex) {
+        t += `⏳ <b>${steps[i]}</b>...\n`;
+      } else {
+        t += `⚪️ ${steps[i]}\n`;
+      }
+    }
+    if (statusText) {
+      t += `\n${statusText}`;
+    }
+    return t;
+  };
+
+  try {
+    const initialText = renderText(0);
+    if (msgId) {
+      const ok = await editTelegramMessage(chatId, msgId, initialText);
+      statusMsgId = ok ? msgId : await sendTelegramMessage(chatId, initialText);
+    } else {
+      statusMsgId = await sendTelegramMessage(chatId, initialText);
+    }
+
+    const execCmd = (cmd) => {
+      return new Promise((resolve, reject) => {
+        const { exec } = require('child_process');
+        exec(cmd, { cwd: __dirname }, (error, stdout, stderr) => {
+          if (error) {
+            reject(new Error(stderr.trim() || stdout.trim() || error.message));
+          } else {
+            resolve(stdout);
+          }
+        });
+      });
+    };
+
+    // Шаг 1: git pull
+    try {
+      await execCmd('git pull');
+    } catch (err) {
+      log('git pull failed, trying stash:', err.message);
+      await execCmd('git stash && git pull && git stash pop').catch(stashErr => {
+        throw new Error('Ошибка git pull: ' + err.message + '\n(stash failed: ' + stashErr.message + ')');
+      });
+    }
+
+    // Шаг 2
+    await editTelegramMessage(chatId, statusMsgId, renderText(1));
+    await execCmd('npm install --no-fund --no-audit');
+
+    // Шаг 3
+    await editTelegramMessage(chatId, statusMsgId, renderText(2));
+    await execCmd('npx puppeteer browsers install chrome');
+
+    // Готово!
+    const successText = renderText(3, '✅ <b>Обновление успешно завершено!</b>\n\nПерезапускаю бота для применения изменений...');
+    await editTelegramMessage(chatId, statusMsgId, successText);
+
+    log('Обновление завершено. Выход из процесса через 2 секунды...');
+    setTimeout(() => {
+      process.exit(0);
+    }, 2000);
+
+  } catch (err) {
+    log('Ошибка обновления кода:', err.message);
+    const errorText = `❌ <b>Ошибка обновления кода!</b>\n\n<code>${err.message.slice(0, 1000)}</code>\n\nПопробуйте запустить команду вручную.`;
+    if (statusMsgId) {
+      await editTelegramMessage(chatId, statusMsgId, errorText);
+    } else {
+      await sendTelegramMessage(chatId, errorText);
+    }
+  }
+}
+
 async function handleStats(chatId, messageId) {
   let text = '📈 <b>Статистика с сайта</b>\n\n';
 
@@ -499,6 +585,18 @@ async function handleStats(chatId, messageId) {
 // ─── Telegram API ──────────────────────────────────────────────────────────────
 const TELEGRAM_API = `https://api.telegram.org/bot${CONFIG.telegramToken}`;
 
+// Вспомогательный хелпер для fetch с таймаутом, чтобы предотвратить зависание бота
+async function fetchWithTimeout(resource, options = {}) {
+  const { timeout = 15000 } = options;
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    return await fetch(resource, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(id);
+  }
+}
+
 // Установка меню команд в Telegram (кнопка слева от ввода)
 async function setupBotCommands() {
   if (!CONFIG.telegramToken) return;
@@ -509,8 +607,9 @@ async function setupBotCommands() {
       { command: 'status',  description: 'Текущий статус' },
       { command: 'stats',   description: 'Статистика с сайта' },
       { command: 'restart', description: 'Перезапустить' },
+      { command: 'update',  description: 'Обновить код' },
     ];
-    await fetch(`${TELEGRAM_API}/setMyCommands`, {
+    await fetchWithTimeout(`${TELEGRAM_API}/setMyCommands`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ commands }),
@@ -526,7 +625,7 @@ async function sendTelegramMessage(chatId, text, keyboard) {
   try {
     const body = { chat_id: chatId, text, parse_mode: 'HTML' };
     if (keyboard) body.reply_markup = { inline_keyboard: keyboard };
-    const resp = await fetch(`${TELEGRAM_API}/sendMessage`, {
+    const resp = await fetchWithTimeout(`${TELEGRAM_API}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -544,7 +643,7 @@ async function editTelegramMessage(chatId, messageId, text, keyboard) {
   try {
     const body = { chat_id: chatId, message_id: messageId, text, parse_mode: 'HTML' };
     if (keyboard) body.reply_markup = { inline_keyboard: keyboard };
-    const resp = await fetch(`${TELEGRAM_API}/editMessageText`, {
+    const resp = await fetchWithTimeout(`${TELEGRAM_API}/editMessageText`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -566,7 +665,7 @@ async function editTelegramMessage(chatId, messageId, text, keyboard) {
 async function deleteTelegramMessage(chatId, messageId) {
   if (!CONFIG.telegramToken || !chatId || !messageId) return false;
   try {
-    const resp = await fetch(`${TELEGRAM_API}/deleteMessage`, {
+    const resp = await fetchWithTimeout(`${TELEGRAM_API}/deleteMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, message_id: messageId }),
@@ -582,7 +681,7 @@ async function deleteTelegramMessage(chatId, messageId) {
 async function answerCallbackQuery(callbackId, text) {
   if (!CONFIG.telegramToken || !callbackId) return;
   try {
-    await fetch(`${TELEGRAM_API}/answerCallbackQuery`, {
+    await fetchWithTimeout(`${TELEGRAM_API}/answerCallbackQuery`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ callback_query_id: callbackId, text, show_alert: false }),
@@ -603,7 +702,7 @@ async function pollTelegram() {
       allowed_updates: JSON.stringify(['message', 'callback_query']),
     });
 
-    const resp = await fetch(`${TELEGRAM_API}/getUpdates?${params}`);
+    const resp = await fetchWithTimeout(`${TELEGRAM_API}/getUpdates?${params}`, { timeout: 35000 });
     const data = await resp.json();
 
     if (!data.ok) {
@@ -624,7 +723,8 @@ async function pollTelegram() {
       saveOffset(state.telegramOffset);
 
       // Игнорируем обновления старше 60 секунд (защита от дублей при перезапуске)
-      const updateDate = update.message?.date || update.callback_query?.message?.date;
+      // Только для обычных текстовых сообщений, так как у callback_query.message.date — это дата создания меню, которое может быть старым
+      const updateDate = update.message?.date;
       if (updateDate && Date.now() / 1000 - updateDate > 60) continue;
 
       // Handle callback_query (inline button press)
@@ -652,6 +752,7 @@ async function pollTelegram() {
           case 'menu':      handleShowMenu(chatId, msgId).catch(err => log('Callback menu error:', err.message)); break;
           case 'instances': handleInstances(chatId, msgId).catch(err => log('Callback instances error:', err.message)); break;
           case 'kill_all_others': handleKillOthers(chatId, msgId).catch(err => log('Callback kill_all_others error:', err.message)); break;
+          case 'update_code': handleUpdateCode(chatId, msgId).catch(err => log('Callback update_code error:', err.message)); break;
           default:
             if (cbData.startsWith('kill_')) {
               const pid = parseInt(cbData.slice(5));
@@ -683,6 +784,8 @@ async function pollTelegram() {
         handleStats(msg.chat.id).catch(err => log('Text stats error:', err.message));
       } else if (text === '/restart' || text === 'restart' || text === '🔄 перезапустить') {
         handleRestart(msg.chat.id).catch(err => log('Text restart error:', err.message));
+      } else if (text === '/update' || text === 'update' || text === 'обновить' || text === '/update_code') {
+        handleUpdateCode(msg.chat.id).catch(err => log('Text update error:', err.message));
       } else if (text === '/menu' || text === 'menu' || text === '⚙️ меню') {
         handleShowMenu(msg.chat.id).catch(err => log('Text menu error:', err.message));
       } else {
