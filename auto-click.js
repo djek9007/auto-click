@@ -973,9 +973,30 @@ async function fillLoginForm(page) {
 
   log('Поиск формы логина...');
 
-  // Пробуем найти поля email/password
-  let emailInput = await page.$('#email-field, input[name="email"], input[type="email"], input[autocomplete="email"]');
-  let passwordInput = await page.$('#password-field, input[name="password"], input[type="password"], input[autocomplete="current-password"]');
+  // Логируем поля на странице для диагностики
+  const pageInputs = await page.evaluate(() => {
+    return [...document.querySelectorAll('input')].map(i => ({
+      name: i.getAttribute('name'),
+      id: i.getAttribute('id'),
+      type: i.getAttribute('type'),
+      placeholder: i.getAttribute('placeholder'),
+      autocomplete: i.getAttribute('autocomplete'),
+    }));
+  }).catch(() => []);
+  if (pageInputs.length > 0) {
+    log('Поля на странице:', JSON.stringify(pageInputs));
+  }
+
+  // Пробуем найти поля email/password — разные варианты для разных систем
+  let emailInput = await page.$(
+    '#email-field, input[name="email"], input[type="email"], input[autocomplete="email"], ' +
+    'input[name="user_name"], input[name="login"], input[name="username"], ' +
+    '#input_email, #login_name, #user_name'
+  );
+  let passwordInput = await page.$(
+    '#password-field, input[name="password"], input[type="password"], input[autocomplete="current-password"], ' +
+    'input[name="passwd"], input[name="password"]'
+  );
 
   if (!emailInput || !passwordInput) {
     // Fallback: первый и второй input
@@ -1006,7 +1027,13 @@ async function fillLoginForm(page) {
   }
 
   // Отправка формы
-  const submitBtn = await page.$('button[type="submit"], button:has-text("Login"), button:has-text("Sign in"), button:has-text("Войти"), #login-form button, .login-card__cta button');
+  const submitBtn = await page.$(
+    'button[type="submit"], ' +
+    'button:has-text("Login"), button:has-text("Sign in"), button:has-text("Войти"), ' +
+    'button:has-text("Sign In"), button:has-text("Log in"), ' +
+    '#login-form button, .login-card__cta button, ' +
+    '.form-actions button, .sign-in-button'
+  );
   if (submitBtn) {
     await submitBtn.click();
     log('Клик по кнопке входа');
@@ -1015,7 +1042,7 @@ async function fillLoginForm(page) {
     log('Отправка через Enter');
   }
 
-  await sleep(3000);
+  await sleep(5000);
   return true;
 }
 
