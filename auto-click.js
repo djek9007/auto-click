@@ -1137,19 +1137,37 @@ async function fillLoginForm(page) {
   }
 
   // Отправка формы
-  const submitBtn = await page.$(
-    'button[type="submit"], ' +
-    'button:has-text("Login"), button:has-text("Sign in"), button:has-text("Войти"), ' +
-    'button:has-text("Sign In"), button:has-text("Log in"), ' +
-    '#login-form button, .login-card__cta button, ' +
+  let submitBtn = await page.$(
+    'button[type="submit"], #login-form button, .login-card__cta button, ' +
     '.form-actions button, .sign-in-button'
-  );
+  ).catch(() => null);
+
   if (submitBtn) {
     await submitBtn.click();
     log('Клик по кнопке входа');
   } else {
-    await page.keyboard.press('Enter');
-    log('Отправка через Enter');
+    // Пробуем кликнуть по тексту кнопки
+    const clickedByText = await page.evaluate(() => {
+      const btns = document.querySelectorAll('button, input[type="submit"], a.button');
+      const keywords = ['login', 'sign in', 'войти', 'log in'];
+      for (const btn of btns) {
+        const text = (btn.textContent || btn.value || '').toLowerCase();
+        for (const kw of keywords) {
+          if (text.includes(kw)) {
+            btn.click();
+            return true;
+          }
+        }
+      }
+      return false;
+    }).catch(() => false);
+
+    if (clickedByText) {
+      log('Клик по кнопке входа по тексту');
+    } else {
+      await page.keyboard.press('Enter');
+      log('Отправка через Enter');
+    }
   }
 
   await sleep(5000);
