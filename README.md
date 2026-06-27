@@ -1,4 +1,4 @@
-# AutoClick — Tomorrow School Dashboard Automation
+# AutoClick — Dashboard Automation
 
 > Скрипт логинится на dashboard.tomorrow-school.ai, запускает учёт времени
 > и имитирует активность (скролл + клики) каждые 5–12 минут.
