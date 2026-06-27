@@ -1,0 +1,24 @@
+node_modules/
+.screenshots/
+
+# Runtime state files
+.tg_offset
+.tg_session
+.auto-click.pid
+output.log
+
+# Environment / secrets
+.env
+.env.local
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Archives
+*.zip

@@ -1,0 +1,12 @@
+{
+  "name": "dashboard-autoclick",
+  "version": "2.0.0",
+  "description": "Puppeteer script для автоматической активности на dashboard.tomorrow-school.ai с управлением через Telegram",
+  "main": "auto-click.js",
+  "scripts": {
+    "start": "node auto-click.js"
+  },
+  "dependencies": {
+    "puppeteer": "^24.0.0"
+  }
+}
