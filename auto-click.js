@@ -760,11 +760,31 @@ async function setupPage(page) {
     }
   });
 
-  // Detect login redirects
-  page.on('response', (resp) => {
-    if (resp.url().includes('/login') && resp.status() === 200) {
-      log('Страница логина обнаружена');
+  // Сброс перехваченных данных при каждой новой навигации
+  state._loginResponse = null;
+  state._popup = null;
+
+  // Перехват ответов от auth endpoint
+  page.on('response', async (resp) => {
+    const url = resp.url();
+    if (url.includes('/login') || url.includes('/auth') || url.includes('/oauth') || url.includes('/casdoor')) {
+      state._loginResponse = { url, status: resp.status() };
+      log('Auth API ответ:', url, resp.status());
+      try {
+        const text = await resp.text();
+        state._loginResponse.body = text.slice(0, 1000);
+        log('Auth ответ (первые 200):', text.replace(/\s+/g, ' ').trim().slice(0, 200));
+      } catch {}
     }
+  });
+
+  // Обработка всплывающих окон OAuth
+  page.on('popup', async (popup) => {
+    log('Всплывающее окно:', popup.url());
+    state._popup = popup;
+    try {
+      await popup.waitForNavigation({ waitUntil: 'load', timeout: 15000 });
+    } catch {}
   });
 }
 
@@ -772,169 +792,152 @@ async function setupPage(page) {
 async function login(page) {
   log('Проверка авторизации...');
   await page.goto(CONFIG.targetUrl, { waitUntil: 'networkidle0', timeout: 30000 });
-
-  // Wait for page to render (React SPA)
   await sleep(5000);
 
-  // Check if already logged in — look for dashboard elements
+  // Check if already logged in
   const isLoggedIn = await checkLoggedIn(page);
   if (isLoggedIn) {
     log('Уже авторизован');
     return true;
   }
 
-  log('Форма входа: OAuth через Gitea + 01-platform. Запуск авторизации...');
+  log('Авторизация не найдена. Запуск входа...');
 
-  // ── Step 1: Click "Войти через Gitea" ──
-  // Пробуем до 3 раз с разными стратегиями
-  let giteaNavigated = false;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    const urlBefore = page.url();
-    const giteaClicked = await clickButtonByText(page, ['Gitea']);
-    if (!giteaClicked) {
-      if (attempt === 3) {
-        await takeScreenshot(page, 'gitea_not_found');
-        throw new Error('Кнопка "Войти через Gitea" не найдена на ' + page.url());
-      }
-      log('Gitea не найдена, попытка ' + attempt + ': пробуем другие селекторы...');
-      // Альтернатива: поиск по href или aria-label
-      const altClicked = await page.evaluate(() => {
-        const links = document.querySelectorAll('a[href*="gitea"], a[href*="oauth"], a[href*="login"], button[aria-label*="Gitea"]');
-        for (const el of links) {
-          if (el.offsetParent !== null) { el.click(); return true; }
+  // Шаг 1: Ищем все кнопки/ссылки для входа на странице
+  const authButtons = await page.evaluate(() => {
+    const results = [];
+    const els = document.querySelectorAll('button, a');
+    const keywords = ['gitea', 'войти', 'login', 'sign in', 'войти через', 'signin',
+                       '01-platform', '01 platform', 'вход', 'authorize', 'oauth',
+                       'войти с помощью', 'continue with', 'casdoor'];
+    for (const el of els) {
+      const text = (el.textContent || '').trim().toLowerCase();
+      const href = (el.getAttribute('href') || '').toLowerCase();
+      const cls = (el.className || '').toLowerCase();
+      for (const kw of keywords) {
+        if (text.includes(kw) || href.includes(kw) || cls.includes(kw)) {
+          results.push({ text: text.slice(0, 50), href: href.slice(0, 100), tag: el.tagName });
+          break;
         }
-        return false;
-      }).catch(() => false);
-      if (!altClicked) continue;
+      }
     }
-    log('Клик: Войти через Gitea (попытка ' + attempt + ')');
-    await sleep(2000);
-    await waitForNavigation(page, 10000);
+    return results;
+  }).catch(() => []);
 
-    // Проверяем, изменился ли URL
+  log('Найдено кнопок входа:', authButtons.length);
+  for (const btn of authButtons) {
+    log('  —', btn.tag, 'text:', btn.text, 'href:', btn.href);
+  }
+
+  // Шаг 2: Пробуем кликнуть по каждой кнопке входа
+  let authStarted = false;
+  const urlBefore = page.url();
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    // Сбрасываем перехваченные данные
+    state._loginResponse = null;
+    state._popup = null;
+
+    const clicked = await clickButtonByText(page, [
+      'gitea', 'войти', 'login', 'sign in', 'войти через',
+      '01-platform', '01 platform', 'вход', 'authorize',
+      'continue with', 'signin'
+    ]);
+
+    if (!clicked) {
+      log('Кнопка входа не найдена (попытка ' + attempt + ')');
+      if (attempt === 3) {
+        await takeScreenshot(page, 'no_login_button');
+        throw new Error('Не найдено кнопки входа. Страница: ' + page.url());
+      }
+      await sleep(2000);
+      continue;
+    }
+
+    log('Клик по кнопке входа (попытка ' + attempt + ')');
+
+    // Ждём: либо навигацию, либо XHR ответ, либо всплывающее окно
+    await sleep(3000);
+
+    // Проверяем навигацию
     const urlAfter = page.url();
-    if (urlAfter !== urlBefore && !urlAfter.includes('dashboard')) {
-      giteaNavigated = true;
+    if (urlAfter !== urlBefore && !urlAfter.includes('chrome-error')) {
+      log('Навигация на:', urlAfter.slice(0, 100));
+      authStarted = true;
       break;
     }
-    log('Навигация не произошла, повтор...');
-  }
-  await sleep(2000);
 
-  if (!giteaNavigated) {
-    await takeScreenshot(page, 'gitea_no_navigation');
-    // Пробуем прямой переход на страницу логина 01-platform (Gitea SSO)
-    log('Gitea: пробуем прямой переход на страницу авторизации 01...');
-    await page.goto('https://auth.tomorrow-school.ai/oauth/authorize', { waitUntil: 'networkidle0', timeout: 15000 }).catch(() => {});
-    await sleep(3000);
-  }
-
-  // ── Step 2: Click "Sign in with 01-platform" on Gitea ──
-  let oauthNavigated = false;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    const urlBefore = page.url();
-    const oauthClicked = await clickButtonByText(page, ['01-platform', '01 platform', '01platform', 'SSO']);
-    if (!oauthClicked) {
-      if (attempt === 3) {
-        await takeScreenshot(page, 'oauth_btn_not_found');
-        throw new Error('Кнопка "Sign in with 01-platform" не найдена на ' + page.url());
-      }
-      log('01-platform не найдена, попытка ' + attempt + ': пробуем прямую ссылку...');
-      // Пробуем найти ссылку с oauth/casdoor/openid в href
-      const altClicked = await page.evaluate(() => {
-        const links = document.querySelectorAll('a[href*="oauth"], a[href*="casdoor"], a[href*="openid"], a[href*="01"], a[href*="authorize"]');
-        for (const el of links) {
-          if (el.offsetParent !== null) { el.click(); return true; }
+    // Проверяем всплывающее окно
+    if (state._popup) {
+      log('Обработка OAuth через всплывающее окно');
+      const popup = state._popup;
+      state._popup = null;
+      try {
+        await popup.bringToFront();
+        await sleep(2000);
+        // Пробуем заполнить форму в popup
+        const filled = await fillLoginForm(popup);
+        if (filled) {
+          log('Форма заполнена в popup');
+          await sleep(5000);
+          // Закрываем popup и возвращаемся на основную страницу
+          await popup.close().catch(() => {});
+          await page.bringToFront();
+          authStarted = true;
+          break;
         }
-        return false;
-      }).catch(() => false);
-      if (!altClicked) continue;
+      } catch (err) {
+        log('Ошибка popup:', err.message);
+      }
     }
-    log('Клик: Sign in with 01-platform (попытка ' + attempt + ')');
-    await sleep(3000);
-    await waitForNavigation(page, 15000);
 
-    const urlAfter = page.url();
-    if (urlAfter !== urlBefore) {
-      oauthNavigated = true;
-      break;
+    // Проверяем XHR ответ — если там есть redirect URL
+    if (state._loginResponse && state._loginResponse.body) {
+      const body = state._loginResponse.body;
+      // Ищем URL для редиректа в JSON ответе
+      const redirectMatch = body.match(/"?(?:redirect|redirect_uri|url|location|authUrl|authorization_url)"?\s*[:=]\s*"([^"]+)"/i);
+      if (redirectMatch) {
+        const redirectUrl = redirectMatch[1];
+        log('Найден URL редиректа из XHR:', redirectUrl.slice(0, 100));
+        await page.goto(redirectUrl, { waitUntil: 'networkidle0', timeout: 20000 }).catch(() => {});
+        await sleep(3000);
+        authStarted = true;
+        break;
+      }
     }
-    log('01-platform: навигация не произошла, повтор...');
-  }
-  await sleep(2000);
 
-  // ── Step 3: Fill login form on 01-platform ──
-  log('Форма логина 01-platform. Заполнение...');
-
-  // Возможный сценарий: SSO-провайдер уже имел активную сессию и сразу
-  // перекинул обратно на dashboard. Проверяем, не авторизованы ли уже.
-  const ssoAutoLoggedIn = await checkLoggedIn(page);
-  if (ssoAutoLoggedIn) {
-    log('SSO: уже аутентифицирован (авто-редирект)');
-    await notifyTelegram('🔓 Успешный вход в систему (SSO)');
-    return true;
+    log('Клик не дал результата, повтор...');
   }
 
-  // Use known selectors from login page
-  let emailInput = await page.$('#email-field') || await page.$('input[name="email"]');
-  let passwordInput = await page.$('#password-field') || await page.$('input[name="password"]');
-
-  if (!emailInput || !passwordInput) {
-    // Fallback: try generic detection
-    const inputs = await page.$$('input');
-    log('Найдено input элементов:', inputs.length, 'на', page.url());
-    if (inputs.length >= 2) {
-      emailInput = inputs[0];
-      passwordInput = inputs[1];
-    } else {
-      throw new Error(
-        'Не удалось найти поля входа на 01-platform.\n' +
-        'Страница: ' + page.url()
-      );
-    }
+  // Шаг 3: Если мы на странице логина — заполняем форму
+  if (!authStarted) {
+    // Пробуем прямой переход на страницу логина
+    await takeScreenshot(page, 'no_auth_redirect');
+    log('Пробуем найти форму логина на текущей странице...');
   }
 
-  // Fill credentials
-  await emailInput.click({ clickCount: 3 });
-  await emailInput.type(CONFIG.email, { delay: 50 });
-  log('Email введён');
-
-  await passwordInput.click({ clickCount: 3 });
-  await passwordInput.type(CONFIG.password, { delay: 30 });
-  log('Пароль введён');
-
-  // Submit
-  const submitBtn = await page.$('button[type="submit"]') ||
-                     await page.$('button:has-text("Login")') ||
-                     await page.$('#login-form button');
-
-  if (submitBtn) {
-    await submitBtn.click();
-    log('Клик по кнопке Login');
-  } else {
-    await page.keyboard.press('Enter');
-    log('Отправка формы через Enter');
+  const loggedIn = await fillLoginForm(page);
+  if (!loggedIn) {
+    await takeScreenshot(page, 'login_failed');
+    throw new Error('Не удалось авторизоваться. Страница: ' + page.url());
   }
 
-  // ── Step 4: Wait for OAuth redirect back to dashboard ──
-  log('Ожидание редиректа после логина...');
-  await sleep(5000);
-  for (let i = 0; i < 8; i++) {
+  // Шаг 4: Ждём редирект обратно на dashboard
+  log('Ожидание редиректа на dashboard...');
+  for (let i = 0; i < 12; i++) {
     try {
       await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 10000 });
-    } catch { /* continue waiting */ }
+    } catch {}
     await sleep(3000);
-    const url = page.url();
-    log('URL:', url.substring(0, 80));
-
-    if (url.includes('dashboard')) break;
     const loggedIn = await checkLoggedIn(page);
-    if (loggedIn) break;
+    if (loggedIn) {
+      log('Авторизация успешна');
+      await notifyTelegram('🔓 Успешный вход в систему');
+      return true;
+    }
   }
 
-  await sleep(5000);
-
-  // Wait for dashboard to fully render (menu buttons)
+  // Шаг 5: Финальная проверка — ждём загрузки дашборда
   log('Ожидание загрузки дашборда...');
   for (let i = 0; i < 10; i++) {
     const hasMenu = await page.evaluate(() => {
@@ -947,41 +950,73 @@ async function login(page) {
       }
       return false;
     }).catch(() => false);
-    if (hasMenu) { log('Дашборд загружен'); break; }
-    log('Ожидание...');
+    if (hasMenu) {
+      log('Дашборд загружен');
+      // Запускаем учёт времени
+      await ensureTrackingActive(page);
+      return true;
+    }
+    log('Ожидание дашборда...');
     await sleep(3000);
   }
 
-  // Start time tracking if not already running
-  log('Проверка статуса учёта времени...');
-  const trackingStarted = await page.evaluate(() => {
-    const btns = document.querySelectorAll('button');
-    for (const btn of btns) {
-      const text = btn.textContent.trim().toLowerCase();
-      // Если кнопка says "Запустить учёт" или "Начать учёт" — кликаем
-      if (text.includes('запустить') || text.includes('начать') || text.includes('start') || text.includes('запуск')) {
-        btn.click();
-        return 'started';
-      }
-    }
-    return 'already_running';
-  });
+  throw new Error('Не удалось загрузить дашборд после входа. Страница: ' + page.url());
+}
 
-  if (trackingStarted === 'started') {
-    log('Учёт времени запущен');
-  } else {
-    log('Учёт времени уже активен');
-  }
-
-  // Verify login
-  const loggedIn = await checkLoggedIn(page);
-  if (loggedIn) {
-    log('Авторизация успешна');
-    await notifyTelegram('🔓 Успешный вход в систему');
+// ─── Fill Login Form ──────────────────────────────────────────────────────────
+async function fillLoginForm(page) {
+  // Проверяем, может мы уже авторизованы
+  if (await checkLoggedIn(page)) {
+    log('Уже авторизован (fillLoginForm)');
     return true;
   }
 
-  throw new Error('Не удалось авторизоваться. Проверьте EMAIL/PASSWORD');
+  log('Поиск формы логина...');
+
+  // Пробуем найти поля email/password
+  let emailInput = await page.$('#email-field, input[name="email"], input[type="email"], input[autocomplete="email"]');
+  let passwordInput = await page.$('#password-field, input[name="password"], input[type="password"], input[autocomplete="current-password"]');
+
+  if (!emailInput || !passwordInput) {
+    // Fallback: первый и второй input
+    const inputs = await page.$$('input');
+    log('Найдено input элементов:', inputs.length, 'на', page.url());
+    if (inputs.length >= 2) {
+      emailInput = inputs[0];
+      passwordInput = inputs[1];
+    } else {
+      log('Поля ввода не найдены');
+      return false;
+    }
+  }
+
+  // Заполняем форму
+  log('Заполнение формы логина...');
+  try {
+    await emailInput.click({ clickCount: 3 });
+    await emailInput.type(CONFIG.email, { delay: 50 });
+    log('Email введён');
+
+    await passwordInput.click({ clickCount: 3 });
+    await passwordInput.type(CONFIG.password, { delay: 30 });
+    log('Пароль введён');
+  } catch (err) {
+    log('Ошибка ввода:', err.message);
+    return false;
+  }
+
+  // Отправка формы
+  const submitBtn = await page.$('button[type="submit"], button:has-text("Login"), button:has-text("Sign in"), button:has-text("Войти"), #login-form button, .login-card__cta button');
+  if (submitBtn) {
+    await submitBtn.click();
+    log('Клик по кнопке входа');
+  } else {
+    await page.keyboard.press('Enter');
+    log('Отправка через Enter');
+  }
+
+  await sleep(3000);
+  return true;
 }
 
 // Helper: click button by text content
