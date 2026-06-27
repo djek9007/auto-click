@@ -65,7 +65,7 @@ else
 {
   "name": "dashboard-autoclick",
   "version": "2.0.0",
-  "description": "Автоматическая активность на Tomorrow School Dashboard",
+  "description": "Автоматизация dashboard с управлением через Telegram",
   "main": "auto-click.js",
   "dependencies": {
     "puppeteer": "^24.0.0"
@@ -144,7 +144,7 @@ EOF
     SERVICE_PATH="/etc/systemd/system/autoclick.service"
     cat > "$SERVICE_PATH" << EOF
 [Unit]
-Description=AutoClick — Tomorrow School Dashboard activity
+Description=AutoClick — Dashboard automation
 After=network.target
 
 [Service]

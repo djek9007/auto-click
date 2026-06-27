@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * auto-click.js — Автоматическая активность на dashboard.tomorrow-school.ai
+ * auto-click.js — Автоматическая активность на учебном dashboard
  *
  * Использование:
  *   node auto-click.js
@@ -45,7 +45,7 @@ function saveSession() {
 
 // ─── Configuration ─────────────────────────────────────────────────────────────
 // Все настройки передаются через переменные среды или .env файл.
-// EMAIL       — email для входа на Tomorrow School
+// EMAIL       — email для входа
 // PASSWORD    — пароль для входа
 // TELEGRAM_TOKEN — токен Telegram бота
 // HEADLESS    — false чтобы видеть браузер (по умолчанию true)
@@ -833,7 +833,7 @@ async function login(page) {
   let oauthNavigated = false;
   for (let attempt = 1; attempt <= 3; attempt++) {
     const urlBefore = page.url();
-    const oauthClicked = await clickButtonByText(page, ['01-platform', '01 platform', '01platform', 'Tomorrow School', 'SSO']);
+    const oauthClicked = await clickButtonByText(page, ['01-platform', '01 platform', '01platform', 'SSO']);
     if (!oauthClicked) {
       if (attempt === 3) {
         await takeScreenshot(page, 'oauth_btn_not_found');
@@ -875,7 +875,7 @@ async function login(page) {
     return true;
   }
 
-  // Use known selectors from 01.tomorrow-school.ai
+  // Use known selectors from login page
   let emailInput = await page.$('#email-field') || await page.$('input[name="email"]');
   let passwordInput = await page.$('#password-field') || await page.$('input[name="password"]');
 

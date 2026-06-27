@@ -1,6 +1,6 @@
 # AutoClick — Dashboard Automation
 
-> Скрипт логинится на dashboard.tomorrow-school.ai, запускает учёт времени
+> Скрипт логинится на учебном dashboard, запускает учёт времени
 > и имитирует активность (скролл + клики) каждые 5–12 минут.
 > Управление через Telegram бота.
 
@@ -37,7 +37,7 @@ node auto-click.js
 Установить и забыть:
 
 ```bash
-cd ~/Documents/tomorrow/auto-click
+cd auto-click
 sudo bash install.sh
 ```
 
@@ -82,7 +82,7 @@ sudo bash install.sh
 ## 💻 Вариант 1: Быстрый запуск (просто тест)
 
 ```bash
-cd ~/Documents/tomorrow/auto-click
+cd auto-click
 node auto-click.js
 ```
 
@@ -98,7 +98,7 @@ node auto-click.js
 Поддерживает **macOS** (LaunchDaemon) и **Linux** (systemd).
 
 ```bash
-cd ~/Documents/tomorrow/auto-click
+cd auto-click
 sudo bash install.sh
 ```
 
@@ -139,7 +139,7 @@ sudo systemctl restart autoclick     # перезапустить
 
 ### Удалить из системы
 ```bash
-cd ~/Documents/tomorrow/auto-click
+cd auto-click
 sudo bash uninstall.sh
 ```
 
@@ -201,7 +201,7 @@ HEADLESS=false SLOW_MO=50 node auto-click.js
 ## 📋 Что делает скрипт
 
 1. Открывает headless-браузер (невидимый)
-2. Заходит на dashboard.tomorrow-school.ai
+2. Заходит на dashboard
 3. Авторизуется через Gitea + 01-platform
 4. Нажимает «Запустить учёт» (если не запущен)
 5. Каждые 5–12 минут:
