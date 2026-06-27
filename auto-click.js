@@ -719,6 +719,7 @@ async function launchBrowser() {
       '--disable-dev-shm-usage',
       '--disable-gpu',
       '--window-size=1280,800',
+      '--disable-blink-features=AutomationControlled',
     ],
   });
 
@@ -757,6 +758,19 @@ async function setupPage(page) {
   page.on('console', (msg) => {
     if (msg.text().includes('[AutoClick]')) {
       log('[Page]', msg.text());
+    }
+  });
+
+  // Логирование JavaScript-ошибок на странице — для диагностики
+  page.on('pageerror', (err) => {
+    log('[Page JS Error]', err.message);
+  });
+
+  // Логирование упавших запросов ресурсов
+  page.on('requestfailed', (request) => {
+    const url = request.url();
+    if (!url.includes('google-analytics') && !url.includes('gtag') && !url.includes('favicon')) {
+      log('[Request Failed]', url.slice(0, 150), request.failure()?.errorText);
     }
   });
 
@@ -914,12 +928,17 @@ async function login(page) {
     await takeScreenshot(page, 'no_auth_redirect');
     log('Пробуем найти форму логина на текущей странице...');
   } else {
-    // Ждём полной загрузки страницы логина (Gitea может грузиться дольше)
+    // Перезагружаем страницу логина через goto — это гарантирует полную загрузку
+    // с правильным waitUntil (в отличие от waitForNavigation, который мог пропустить событие)
+    const loginUrl = page.url();
+    log('Переход на страницу логина:', loginUrl.slice(0, 100));
     try {
-      await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 });
-    } catch {}
-    await sleep(3000);
-    log('Страница логина загружена:', page.url().slice(0, 80));
+      await page.goto(loginUrl, { waitUntil: 'networkidle0', timeout: 30000 });
+      log('Страница логина загружена:', page.url().slice(0, 80));
+    } catch (err) {
+      log('Предупреждение: страница логина загружена с ошибкой:', err.message);
+      await sleep(3000);
+    }
   }
 
   const loggedIn = await fillLoginForm(page);
@@ -979,34 +998,57 @@ async function fillLoginForm(page) {
 
   log('Поиск формы логина...');
 
-  // Ждём появления input-полей (Gitea грузится с сервера, но может быть задержка)
-  for (let i = 0; i < 15; i++) {
-    const count = await page.$$('input').then(el => el.length).catch(() => 0);
-    if (count >= 2) break;
-    if (i === 0) log('Ожидание полей ввода...');
-    await sleep(1000);
+  // Пробуем дождаться формы через waitForSelector (надёжнее чем ручной цикл)
+  let inputs = [];
+  const FORM_SELECTORS = [
+    '#login_signin_form input',
+    'form .field input',
+    'form input[type="text"], form input[type="email"], form input[type="password"]',
+    'input[name="user_name"], input[name="login"], input[name="email"]',
+    '#login_name, #user_name, #email-field, input[autocomplete="email"]',
+    'input',
+  ];
+
+  for (const selector of FORM_SELECTORS) {
+    try {
+      await page.waitForSelector(selector, { timeout: 4000 });
+      inputs = await page.$$(selector);
+      if (inputs.length >= 2) {
+        log('Поля найдены по селектору:', selector);
+        break;
+      }
+    } catch {
+      // Пробуем следующий селектор
+    }
   }
 
-  // Диагностика: если полей нет, смотрим что внутри страницы
-  const inputCount = await page.$$('input').then(el => el.length).catch(() => 0);
-  if (inputCount === 0) {
-    const diag = await page.evaluate(() => {
-      const f = document.querySelector('form');
-      return {
-        forms: document.forms.length,
-        hasForm: !!f,
-        formAction: f ? f.action : null,
-        formHtml: f ? f.innerHTML.slice(0, 500) : null,
-        bodyHtml: document.body ? document.body.innerHTML.slice(0, 1000) : null,
-        iframes: document.querySelectorAll('iframe').length,
-        shadowRoots: [...document.querySelectorAll('*')].filter(el => el.shadowRoot).length,
-      };
-    }).catch(() => ({}));
-    log('Диагностика формы:', JSON.stringify(diag, null, 2).slice(0, 800));
+  // Если всё ещё ничего не нашли — полная диагностика
+  if (inputs.length < 2) {
+    inputs = await page.$$('input').catch(() => []);
+    log('Найдено input элементов:', inputs.length, 'на', page.url());
+
+    if (inputs.length === 0) {
+      const diag = await page.evaluate(() => {
+        const f = document.querySelector('form');
+        return {
+          forms: document.forms.length,
+          hasForm: !!f,
+          formAction: f ? f.action : null,
+          formHtml: f ? f.innerHTML.slice(0, 500) : null,
+          bodyHtml: document.body ? document.body.innerHTML.slice(0, 1500) : null,
+          iframes: document.querySelectorAll('iframe').length,
+          shadowRoots: [...document.querySelectorAll('*')].filter(el => el.shadowRoot).length,
+          url: window.location.href,
+        };
+      }).catch(() => ({}));
+      log('Диагностика формы:', JSON.stringify(diag, null, 2).slice(0, 1000));
+      log('Поля ввода не найдены');
+      return false;
+    }
   }
 
-  // Логируем поля на странице для диагностики
-  const pageInputs = await page.evaluate(() => {
+  // Логируем найденные поля для диагностики
+  const foundInputs = await page.evaluate(() => {
     return [...document.querySelectorAll('input')].map(i => ({
       name: i.getAttribute('name'),
       id: i.getAttribute('id'),
@@ -1015,8 +1057,8 @@ async function fillLoginForm(page) {
       autocomplete: i.getAttribute('autocomplete'),
     }));
   }).catch(() => []);
-  if (pageInputs.length > 0) {
-    log('Поля на странице:', JSON.stringify(pageInputs));
+  if (foundInputs.length > 0) {
+    log('Поля на странице:', JSON.stringify(foundInputs));
   }
 
   // Пробуем найти поля email/password — разные варианты для разных систем
@@ -1032,8 +1074,9 @@ async function fillLoginForm(page) {
 
   if (!emailInput || !passwordInput) {
     // Fallback: первый и второй input
-    const inputs = await page.$$('input');
-    log('Найдено input элементов:', inputs.length, 'на', page.url());
+    if (inputs.length < 2) {
+      inputs = await page.$$('input').catch(() => []);
+    }
     if (inputs.length >= 2) {
       emailInput = inputs[0];
       passwordInput = inputs[1];
