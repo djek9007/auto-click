@@ -1001,24 +1001,59 @@ async function fillLoginForm(page) {
   // Пробуем дождаться формы через waitForSelector (надёжнее чем ручной цикл)
   let inputs = [];
   const FORM_SELECTORS = [
-    '#login_signin_form input',
-    'form .field input',
+    '#login_signin_form input:not([type="hidden"])',
+    'form .field input:not([type="hidden"])',
     'form input[type="text"], form input[type="email"], form input[type="password"]',
     'input[name="user_name"], input[name="login"], input[name="email"]',
     '#login_name, #user_name, #email-field, input[autocomplete="email"]',
+    'input:not([type="hidden"]):not([type="submit"]):not([type="button"])',
     'input',
   ];
 
-  for (const selector of FORM_SELECTORS) {
-    try {
-      await page.waitForSelector(selector, { timeout: 4000 });
-      inputs = await page.$$(selector);
+  const getInputs = async () => {
+    for (const selector of FORM_SELECTORS) {
+      try {
+        const found = await page.$$(selector);
+        if (found.length >= 2) {
+          return { inputs: found, selector };
+        }
+      } catch {}
+    }
+    return { inputs: [], selector: null };
+  };
+
+  let searchResult = await getInputs();
+  inputs = searchResult.inputs;
+
+  // Если поля не найдены, возможно это страница выбора способа входа (OAuth2)
+  if (inputs.length < 2) {
+    log('Поля ввода формы не найдены. Проверяем наличие кнопок внешнего входа (OAuth2/OIDC)...');
+    
+    // Ищем ссылки внешнего входа
+    const extLoginSelector = 'a.external-login-link, a[href*="/oauth2/"], a[href*="/oauth/"], a[href*="/casdoor"], button.external-login-link';
+    const extLoginLink = await page.$(extLoginSelector).catch(() => null);
+    
+    if (extLoginLink) {
+      const extInfo = await page.evaluate(el => ({
+        text: el.textContent.trim(),
+        href: el.getAttribute('href')
+      }), extLoginLink).catch(() => ({}));
+      
+      log(`Найден внешний вход (OAuth2): "${extInfo.text || ''}" [${extInfo.href || ''}]. Переходим...`);
+      
+      // Кликаем по ссылке внешнего входа
+      await extLoginLink.click();
+      
+      // Ждем навигации и загрузки новой страницы
+      log('Ожидаем перенаправления на страницу авторизации SSO...');
+      await sleep(6000);
+      
+      // Проверяем поля на новой странице
+      searchResult = await getInputs();
+      inputs = searchResult.inputs;
       if (inputs.length >= 2) {
-        log('Поля найдены по селектору:', selector);
-        break;
+        log('Поля найдены на странице SSO по селектору: ' + searchResult.selector);
       }
-    } catch {
-      // Пробуем следующий селектор
     }
   }
 
