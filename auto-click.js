@@ -911,9 +911,15 @@ async function login(page) {
 
   // Шаг 3: Если мы на странице логина — заполняем форму
   if (!authStarted) {
-    // Пробуем прямой переход на страницу логина
     await takeScreenshot(page, 'no_auth_redirect');
     log('Пробуем найти форму логина на текущей странице...');
+  } else {
+    // Ждём полной загрузки страницы логина (Gitea может грузиться дольше)
+    try {
+      await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 });
+    } catch {}
+    await sleep(3000);
+    log('Страница логина загружена:', page.url().slice(0, 80));
   }
 
   const loggedIn = await fillLoginForm(page);
@@ -972,6 +978,14 @@ async function fillLoginForm(page) {
   }
 
   log('Поиск формы логина...');
+
+  // Ждём появления input-полей (Gitea грузится с сервера, но может быть задержка)
+  for (let i = 0; i < 15; i++) {
+    const count = await page.$$('input').then(el => el.length).catch(() => 0);
+    if (count >= 2) break;
+    if (i === 0) log('Ожидание полей ввода...');
+    await sleep(1000);
+  }
 
   // Логируем поля на странице для диагностики
   const pageInputs = await page.evaluate(() => {
