@@ -153,11 +153,15 @@ function getStatusText() {
 async function sendMainMenu(chatId, extraText, messageId) {
   let text = extraText ? extraText + '\n\n' : '';
   text += getStatusText();
-  // Используем edit если есть явный messageId или сохранённый lastMenuMessageId
+  
   const editId = messageId || state.lastMenuMessageId;
+  let success = false;
+  
   if (editId) {
-    await editTelegramMessage(chatId, editId, text, MAIN_KEYBOARD);
-  } else {
+    success = await editTelegramMessage(chatId, editId, text, MAIN_KEYBOARD);
+  }
+  
+  if (!success) {
     const newId = await sendTelegramMessage(chatId, text, MAIN_KEYBOARD);
     if (newId) { state.lastMenuMessageId = newId; saveSession(); }
   }
@@ -186,9 +190,11 @@ async function handleShowMenu(chatId, messageId) {
     : null;
   if (welcome) {
     const editId = messageId || state.lastMenuMessageId;
+    let success = false;
     if (editId) {
-      await editTelegramMessage(chatId, editId, welcome, MAIN_KEYBOARD);
-    } else {
+      success = await editTelegramMessage(chatId, editId, welcome, MAIN_KEYBOARD);
+    }
+    if (!success) {
       const newId = await sendTelegramMessage(chatId, welcome, MAIN_KEYBOARD);
       if (newId) { state.lastMenuMessageId = newId; saveSession(); }
     }
@@ -299,8 +305,14 @@ async function handleInstances(chatId, messageId) {
   if (others.length === 0) {
     text += '\n✅ Других экземпляров нет.';
     const kb = [[{ text: '⬅️ Меню', callback_data: 'menu' }]];
-    if (editId) await editTelegramMessage(chatId, editId, text, kb);
-    else { const n = await sendTelegramMessage(chatId, text, kb); if (n) { state.lastMenuMessageId = n; saveSession(); } }
+    let success = false;
+    if (editId) {
+      success = await editTelegramMessage(chatId, editId, text, kb);
+    }
+    if (!success) {
+      const n = await sendTelegramMessage(chatId, text, kb);
+      if (n) { state.lastMenuMessageId = n; saveSession(); }
+    }
     return;
   }
 
@@ -318,8 +330,14 @@ async function handleInstances(chatId, messageId) {
   if (others.length > 1) keyboard.push([{ text: '❌ Убить все лишние', callback_data: 'kill_all_others' }]);
   keyboard.push([{ text: '🔄 Обновить', callback_data: 'instances' }, { text: '⬅️ Меню', callback_data: 'menu' }]);
 
-  if (editId) await editTelegramMessage(chatId, editId, text, keyboard);
-  else { const n = await sendTelegramMessage(chatId, text, keyboard); if (n) { state.lastMenuMessageId = n; saveSession(); } }
+  let success = false;
+  if (editId) {
+    success = await editTelegramMessage(chatId, editId, text, keyboard);
+  }
+  if (!success) {
+    const n = await sendTelegramMessage(chatId, text, keyboard);
+    if (n) { state.lastMenuMessageId = n; saveSession(); }
+  }
 }
 
 async function handleRestart(chatId, messageId) {
@@ -347,9 +365,11 @@ async function handleStats(chatId, messageId) {
 
   const reply = async (t, k) => {
     const editId = messageId || state.lastMenuMessageId;
+    let success = false;
     if (editId) {
-      await editTelegramMessage(chatId, editId, t, k);
-    } else {
+      success = await editTelegramMessage(chatId, editId, t, k);
+    }
+    if (!success) {
       const newId = await sendTelegramMessage(chatId, t, k);
       if (newId) { state.lastMenuMessageId = newId; saveSession(); }
     }
@@ -504,7 +524,7 @@ async function sendTelegramMessage(chatId, text, keyboard) {
 }
 
 async function editTelegramMessage(chatId, messageId, text, keyboard) {
-  if (!CONFIG.telegramToken || !chatId || !messageId) return;
+  if (!CONFIG.telegramToken || !chatId || !messageId) return false;
   try {
     const body = { chat_id: chatId, message_id: messageId, text, parse_mode: 'HTML' };
     if (keyboard) body.reply_markup = { inline_keyboard: keyboard };
@@ -514,11 +534,16 @@ async function editTelegramMessage(chatId, messageId, text, keyboard) {
       body: JSON.stringify(body),
     });
     const r = await resp.json();
-    if (!r.ok && r.description && !r.description.includes('not modified')) {
-      log('Telegram edit warning:', r.description);
+    if (!r.ok) {
+      if (r.description && !r.description.includes('not modified')) {
+        log('Telegram edit warning:', r.description);
+      }
+      return !!(r.description && r.description.includes('not modified'));
     }
+    return true;
   } catch (err) {
     log('Telegram edit error:', err.message);
+    return false;
   }
 }
 
@@ -551,7 +576,14 @@ async function pollTelegram() {
     const resp = await fetch(`${TELEGRAM_API}/getUpdates?${params}`);
     const data = await resp.json();
 
-    if (!data.ok) return;
+    if (!data.ok) {
+      if (data.description && data.description.includes('conflict')) {
+        log('⚠️ Ошибка Telegram: обнаружен конфликт (409). Похоже, запущен другой экземпляр бота с тем же токеном!');
+      } else {
+        log('Ошибка Telegram API:', data.description || 'Неизвестная ошибка');
+      }
+      return;
+    }
 
     // Даже при пустом ответе сохраняем текущий offset — чтобы при перезапуске
     // не переигрывать старые команды
@@ -658,9 +690,11 @@ async function startTelegramPolling() {
       '🤖 <b>AutoClick</b> запущен и ждёт команды.\n\n' +
       'Нажмите <b>▶️ Запустить</b> чтобы начать учёт времени.\n' +
       'Настройки: ' + CONFIG.maxHours + ' часов, интервал ' + CONFIG.minIntervalMin + '-' + CONFIG.maxIntervalMin + ' мин.';
+    let success = false;
     if (state.lastMenuMessageId) {
-      await editTelegramMessage(state.telegramChatId, state.lastMenuMessageId, msg, MENU_KEYBOARD);
-    } else {
+      success = await editTelegramMessage(state.telegramChatId, state.lastMenuMessageId, msg, MENU_KEYBOARD);
+    }
+    if (!success) {
       const newId = await sendTelegramMessage(state.telegramChatId, msg, MENU_KEYBOARD);
       if (newId) { state.lastMenuMessageId = newId; saveSession(); }
     }
