@@ -73,6 +73,13 @@ if [ -f "$SCRIPT_DIR/output.log" ]; then
     mv "$SCRIPT_DIR/output.log" "$SCRIPT_DIR/output.log.1"
   fi
 fi
+
+# Установка зависимостей если нужно
+if [ ! -d "$SCRIPT_DIR/node_modules" ]; then
+  echo "📦 Установка зависимостей (npm install)..."
+  cd "$SCRIPT_DIR" && npm install --no-fund --no-audit 2>&1 | tail -3
+fi
+
 nohup node "$SCRIPT_DIR/auto-click.js" > "$SCRIPT_DIR/output.log" 2>&1 &
 NEW_PID=$!
 echo "$NEW_PID" > "$PID_FILE"
