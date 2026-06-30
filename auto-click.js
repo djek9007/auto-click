@@ -84,12 +84,51 @@ const CONFIG = {
   machineName:     detectMachineName(),
   gistId:          process.env.GIST_ID || '',
   githubToken:     process.env.GITHUB_TOKEN || '',
+  configGistId:    process.env.CONFIG_GIST_ID || '',
 
   // School coordinates for geolocation override
   latitude:        51.089159,
   longitude:       71.415595,
   accuracy:        10,
 };
+
+// ─── Remote Config Loading ────────────────────────────────────────────────────
+async function loadRemoteConfig() {
+  if (!CONFIG.configGistId || !CONFIG.githubToken) return;
+
+  try {
+    const resp = await fetch(`https://api.github.com/gists/${CONFIG.configGistId}`, {
+      headers: {
+        'Authorization': `token ${CONFIG.githubToken}`,
+        'Accept': 'application/vnd.github.v3+json',
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const file = data.files && data.files['config.json'];
+    if (!file) return;
+
+    const remote = JSON.parse(file.content);
+    log('Remote config загружен из Gist');
+
+    // Apply remote values only if not set locally (.env takes priority)
+    if (!process.env.EMAIL && remote.EMAIL) CONFIG.email = remote.EMAIL;
+    if (!process.env.PASSWORD && remote.PASSWORD) CONFIG.password = remote.PASSWORD;
+    if (!process.env.TELEGRAM_TOKEN && remote.TELEGRAM_TOKEN) CONFIG.telegramToken = remote.TELEGRAM_TOKEN;
+    if (!process.env.TARGET_URL && remote.TARGET_URL) CONFIG.targetUrl = remote.TARGET_URL;
+    if (!process.env.MAX_HOURS && remote.MAX_HOURS) CONFIG.maxHours = parseInt(remote.MAX_HOURS, 10);
+    if (!process.env.MIN_INTERVAL_MIN && remote.MIN_INTERVAL_MIN) CONFIG.minIntervalMin = parseInt(remote.MIN_INTERVAL_MIN, 10);
+    if (!process.env.MAX_INTERVAL_MIN && remote.MAX_INTERVAL_MIN) CONFIG.maxIntervalMin = parseInt(remote.MAX_INTERVAL_MIN, 10);
+    if (!process.env.HEADLESS && remote.HEADLESS) CONFIG.headless = remote.HEADLESS !== 'false';
+    if (!process.env.SLOW_MO && remote.SLOW_MO) CONFIG.slowMo = parseInt(remote.SLOW_MO, 10);
+    if (!process.env.GIST_ID && remote.GIST_ID) CONFIG.gistId = remote.GIST_ID;
+    if (!process.env.GITHUB_TOKEN && remote.GITHUB_TOKEN) CONFIG.githubToken = remote.GITHUB_TOKEN;
+    if (!process.env.CONFIG_GIST_ID && remote.CONFIG_GIST_ID) CONFIG.configGistId = remote.CONFIG_GIST_ID;
+  } catch (err) {
+    log('Remote config error:', err.message);
+  }
+}
 
 // ─── State ─────────────────────────────────────────────────────────────────────
 const _savedSession = loadSession();
@@ -2151,14 +2190,17 @@ async function shutdown() {
 
 // ─── Initialization ────────────────────────────────────────────────────────────
 async function main() {
-  log('AutoClick v2.0.0 — Запуск...');
+  log('AutoClick v2.1.0 — Запуск...');
   log('Node.js:', process.version);
+
+  // Load remote config from Gist if CONFIG_GIST_ID is set
+  await loadRemoteConfig();
 
   // Validate config
   if (!CONFIG.email || !CONFIG.password || !CONFIG.telegramToken) {
     console.error('Ошибка: EMAIL, PASSWORD и TELEGRAM_TOKEN обязательны');
-    console.error('  EMAIL=your@email.com PASSWORD=your_pass TELEGRAM_TOKEN=токен node auto-click.js');
-    console.error('  Или создайте .env файл (см. .env.example)');
+    console.error('  Укажите в .env или создайте Gist с config.json и задайте CONFIG_GIST_ID');
+    console.error('  См. .env.example');
     process.exit(1);
   }
 
