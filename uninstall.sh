@@ -47,6 +47,29 @@ case "$OS" in
     ;;
 esac
 
+# Остановка запущенных процессов
+echo "⏹ Остановка запущенных процессов..."
+for pid in $(ps axo pid,comm | grep '[n]ode' | awk '{print $1}'); do
+  args=$(ps -p "$pid" -o args= 2>/dev/null)
+  if echo "$args" | grep -q 'auto-click.js' && ! echo "$args" | grep -q 'pgrep'; then
+    echo "  Останавливаю PID $pid..."
+    kill "$pid" 2>/dev/null || true
+  fi
+done
+sleep 2
+for pid in $(ps axo pid,comm | grep '[n]ode' | awk '{print $1}'); do
+  args=$(ps -p "$pid" -o args= 2>/dev/null)
+  if echo "$args" | grep -q 'auto-click.js' && ! echo "$args" | grep -q 'pgrep'; then
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+done
+
+# Очистка runtime-файлов из директории проекта
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+rm -f "$SCRIPT_DIR/.auto-click.pid" "$SCRIPT_DIR/.tg_offset" "$SCRIPT_DIR/.tg_session" 2>/dev/null || true
+rm -f "$SCRIPT_DIR/output.log" "$SCRIPT_DIR/output.log.1" 2>/dev/null || true
+rm -rf "$SCRIPT_DIR/.screenshots" 2>/dev/null || true
+
 # Удаление файлов
 if [ -d "$APP_DIR" ]; then
   echo "🗑 Удаление $APP_DIR ..."

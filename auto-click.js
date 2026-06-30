@@ -109,7 +109,7 @@ function formatDuration(ms) {
 
 // ─── Telegram Navigation ───────────────────────────────────────────────────────
 // Главное меню
-const BOT_COMMANDS = '/start — Показать меню\n/stop — Остановить\n/status — Статус\n/stats — Статистика\n/restart — Перезапустить';
+const BOT_COMMANDS = '/start — Показать меню\n/stop — Остановить\n/status — Статус\n/stats — Статистика\n/restart — Перезапустить\n/update — Обновить код';
 
 function getKeyboard() {
   if (state.isRunning) {
@@ -173,6 +173,7 @@ async function sendMainMenu(chatId, extraText, messageId) {
   
   if (state.lastMenuMessageId) {
     await deleteTelegramMessage(chatId, state.lastMenuMessageId).catch(() => {});
+    state.lastMenuMessageId = null;
   }
   
   const newId = await sendTelegramMessage(chatId, text, getKeyboard());
@@ -212,6 +213,7 @@ async function handleShowMenu(chatId, messageId) {
     
     if (state.lastMenuMessageId) {
       await deleteTelegramMessage(chatId, state.lastMenuMessageId).catch(() => {});
+      state.lastMenuMessageId = null;
     }
     const newId = await sendTelegramMessage(chatId, welcome, getKeyboard());
     if (newId) { state.lastMenuMessageId = newId; saveSession(); }
@@ -362,6 +364,7 @@ async function handleRestart(chatId, messageId) {
     await sendMainMenu(chatId, '⏳ Уже перезапускается...', messageId);
     return;
   }
+  state.startingUp = true;
   await sendMainMenu(chatId, '🔄 Перезапускаю...', messageId);
   const restartTargetId = messageId || state.lastMenuMessageId;
   (async () => {
@@ -374,7 +377,7 @@ async function handleRestart(chatId, messageId) {
   })().catch((err) => {
     log('handleRestart bg error:', err.message);
     sendMainMenu(chatId, '❌ Ошибка: ' + err.message, restartTargetId).catch(() => {});
-  });
+  }).finally(() => { state.startingUp = false; });
 }
 
 async function handleUpdateCode(chatId, msgId) {
@@ -443,12 +446,12 @@ async function handleUpdateCode(chatId, msgId) {
     await execCmd('npx puppeteer browsers install chrome');
 
     // Готово!
-    const successText = renderText(3, '✅ <b>Обновление успешно завершено!</b>\n\nПерезапускаю бота для применения изменений...');
+    const successText = renderText(steps.length, '✅ <b>Обновление успешно завершено!</b>\n\nПерезапускаю бота для применения изменений...');
     await editTelegramMessage(chatId, statusMsgId, successText);
 
-    log('Обновление завершено. Выход из процесса через 2 секунды...');
+    log('Обновление завершено. Перезапуск через 2 секунды...');
     setTimeout(() => {
-      process.exit(0);
+      shutdown().catch(() => process.exit(0));
     }, 2000);
 
   } catch (err) {
@@ -757,6 +760,8 @@ async function pollTelegram() {
             if (cbData.startsWith('kill_')) {
               const pid = parseInt(cbData.slice(5));
               handleKillPid(chatId, msgId, pid).catch(err => log('Callback kill_pid error:', err.message));
+            } else {
+              answerCallbackQuery(callbackId, 'Неизвестная команда').catch(() => {});
             }
         }
         continue;
@@ -862,6 +867,16 @@ async function takeScreenshot(page, label) {
   try {
     if (!page) return;
     fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+
+    // Keep only last 20 screenshots
+    const files = fs.readdirSync(SCREENSHOT_DIR)
+      .filter(f => f.endsWith('.png'))
+      .sort()
+      .reverse();
+    while (files.length >= 20) {
+      try { fs.unlinkSync(path.join(SCREENSHOT_DIR, files.pop())); } catch {}
+    }
+
     const filename = `${Date.now()}_${label}.png`;
     const filepath = path.join(SCREENSHOT_DIR, filename);
     await page.screenshot({ path: filepath, fullPage: false });
@@ -902,6 +917,14 @@ async function launchBrowser() {
 
 // ─── Puppeteer — Page Setup ────────────────────────────────────────────────────
 async function setupPage(page) {
+  // Remove any previous listeners to prevent accumulation on restart
+  page.removeAllListeners('dialog');
+  page.removeAllListeners('console');
+  page.removeAllListeners('pageerror');
+  page.removeAllListeners('requestfailed');
+  page.removeAllListeners('response');
+  page.removeAllListeners('popup');
+
   // Override geolocation via CDP (works after permission is granted)
   const cdp = await page.createCDPSession();
   await cdp.send('Emulation.setGeolocationOverride', {
@@ -1337,7 +1360,26 @@ async function fillLoginForm(page) {
   }
 
   await sleep(5000);
-  return true;
+
+  // Verify login actually succeeded
+  const loggedIn = await checkLoggedIn(page);
+  if (loggedIn) {
+    log('Вход подтверждён');
+    return true;
+  }
+
+  // Check if there's an error message on page
+  const errorMsg = await page.evaluate(() => {
+    const errEl = document.querySelector('.error, .alert, .message-error, [class*="error"]');
+    return errEl ? errEl.textContent.trim() : null;
+  }).catch(() => null);
+
+  if (errorMsg) {
+    log('Ошибка входа:', errorMsg);
+  } else {
+    log('Вход не подтверждён (нет ошибки на странице)');
+  }
+  return false;
 }
 
 // Helper: click button by text content
@@ -1423,7 +1465,10 @@ async function ensureTrackingActive(page) {
       for (const btn of btns) {
         const text = btn.textContent.trim().toLowerCase();
         // If tracking hasn't started yet — start it
-        if (text.includes('запустить') || text.includes('начать') || text.includes('запуск') || text.includes('start учёт')) {
+        if ((text.includes('запустить учёт') || text.includes('начать учёт') ||
+             text.includes('запуск учёта') || text.includes('start tracking') ||
+             text === 'start учёт') &&
+            !text.includes('проект')) {
           btn.click();
           return 'started';
         }
@@ -1479,53 +1524,40 @@ async function performActivity(page) {
     log('Скролл вниз:', scrollAmount + 'px');
     await sleep(getRandomInt(800, 1500));
 
-    // 2. Find menu buttons
-    const buttons = await page.evaluate((texts) => {
+    // 2. Find and click a random menu button in one evaluate call
+    const clickResult = await page.evaluate((texts) => {
       const allBtns = document.querySelectorAll('button');
-      const results = [];
+      const matching = [];
       for (const btn of allBtns) {
         const trimmed = btn.textContent.trim();
         for (const text of texts) {
           if (trimmed.includes(text)) {
-            results.push({ index: [...allBtns].indexOf(btn), text: trimmed });
+            matching.push({ btn, text: trimmed });
             break;
           }
         }
       }
-      return results;
+      if (matching.length === 0) return { clicked: false };
+      const target = matching[Math.floor(Math.random() * matching.length)];
+      target.btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      target.btn.click();
+      return { clicked: true, text: target.text };
     }, MENU_TEXTS);
 
-    if (buttons.length === 0) {
+    if (!clickResult.clicked) {
       log('Кнопки меню не найдены, скролл вверх');
       const scrollUp = getRandomInt(100, 200);
       await page.evaluate((amount) => {
         window.scrollBy({ top: -amount, behavior: 'smooth' });
       }, scrollUp);
       await sleep(1000);
-      state.clickCount++;
       return { success: true, action: 'scrolled_only' };
     }
 
-    // Pick random button
-    const target = buttons[getRandomInt(0, buttons.length - 1)];
-    log('Цель:', target.text);
-
-    // 3. Hover over it
-    const elements = await page.$$('button');
-    const targetEl = elements[target.index];
-    if (targetEl) {
-      await targetEl.hover();
-      log('Hover на:', target.text);
-      await sleep(getRandomInt(500, 1500));
-
-      // 4. Click
-      await targetEl.click();
-      log('Клик на:', target.text);
-    }
-
+    log('Клик на:', clickResult.text);
     state.clickCount++;
     log('Активность выполнена. Всего кликов:', state.clickCount);
-    return { success: true, action: 'clicked', buttonText: target.text };
+    return { success: true, action: 'clicked', buttonText: clickResult.text };
   } catch (err) {
     log('Ошибка активности:', err.message);
     return { success: false, error: err.message };
@@ -1577,7 +1609,10 @@ async function activityLoop(page) {
     await ensureTrackingActive(page);
 
     // Perform activity
-    await performActivity(page);
+    const activityResult = await performActivity(page);
+    if (!activityResult.success) {
+      log('Активность не выполнена:', activityResult.error || 'unknown');
+    }
 
     // Calculate next interval (5-12 min)
     const intervalMin = getRandomInt(CONFIG.minIntervalMin, CONFIG.maxIntervalMin);
@@ -1730,7 +1765,12 @@ async function main() {
   process.on('SIGTERM', shutdown);
   process.on('uncaughtException', (err) => {
     log('Непредвиденная ошибка:', err.message);
-    shutdown();
+    shutdown().catch(() => {});
+    setTimeout(() => process.exit(1), 3000);
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    log('Unhandled rejection:', reason instanceof Error ? reason.message : String(reason));
   });
 
   // Настраиваем меню команд в Telegram (кнопка слева от ввода)
