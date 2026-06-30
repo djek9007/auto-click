@@ -94,37 +94,61 @@ const CONFIG = {
 
 // ─── Remote Config Loading ────────────────────────────────────────────────────
 async function loadRemoteConfig() {
-  if (!CONFIG.configGistId) return;
+  if (!CONFIG.configGistId) {
+    log('Remote config: CONFIG_GIST_ID не задан, пропускаем загрузку');
+    return;
+  }
 
+  log('Remote config: загрузка из Gist', CONFIG.configGistId);
   try {
     // Config gist is public-readable — no auth needed
     const resp = await fetch(`https://api.github.com/gists/${CONFIG.configGistId}`, {
       headers: { 'Accept': 'application/vnd.github.v3+json' },
       signal: AbortSignal.timeout(10000),
     });
-    if (!resp.ok) { log('Remote config: HTTP', resp.status); return; }
+    if (!resp.ok) {
+      log('Remote config: HTTP ошибка', resp.status, resp.statusText);
+      return;
+    }
     const data = await resp.json();
     const file = data.files && data.files['config.json'];
-    if (!file) { log('Remote config: config.json not found in Gist'); return; }
+    if (!file) {
+      log('Remote config: config.json не найден в Gist');
+      log('Remote config: доступные файлы:', Object.keys(data.files || {}).join(', '));
+      return;
+    }
 
     const remote = JSON.parse(file.content);
     log('Remote config загружен из Gist');
     log('Remote keys:', Object.keys(remote).join(', '));
 
     // Apply remote values — local .env takes priority
-    if (!process.env.EMAIL && remote.EMAIL) { CONFIG.email = remote.EMAIL; log('  + EMAIL from Gist'); }
-    if (!process.env.PASSWORD && remote.PASSWORD) { CONFIG.password = remote.PASSWORD; log('  + PASSWORD from Gist'); }
-    if (!process.env.TELEGRAM_TOKEN && remote.TELEGRAM_TOKEN) { CONFIG.telegramToken = remote.TELEGRAM_TOKEN; log('  + TELEGRAM_TOKEN from Gist'); }
+    if (!process.env.EMAIL && remote.EMAIL) {
+      CONFIG.email = remote.EMAIL;
+      log('  + EMAIL from Gist:', remote.EMAIL.slice(0, 3) + '***');
+    }
+    if (!process.env.PASSWORD && remote.PASSWORD) {
+      CONFIG.password = remote.PASSWORD;
+      log('  + PASSWORD from Gist: ***');
+    }
+    if (!process.env.TELEGRAM_TOKEN && remote.TELEGRAM_TOKEN) {
+      CONFIG.telegramToken = remote.TELEGRAM_TOKEN;
+      log('  + TELEGRAM_TOKEN from Gist:', remote.TELEGRAM_TOKEN.slice(0, 10) + '***');
+    }
     if (!process.env.TARGET_URL && remote.TARGET_URL) CONFIG.targetUrl = remote.TARGET_URL;
     if (!process.env.MAX_HOURS && remote.MAX_HOURS) CONFIG.maxHours = parseInt(remote.MAX_HOURS, 10);
     if (!process.env.MIN_INTERVAL_MIN && remote.MIN_INTERVAL_MIN) CONFIG.minIntervalMin = parseInt(remote.MIN_INTERVAL_MIN, 10);
     if (!process.env.MAX_INTERVAL_MIN && remote.MAX_INTERVAL_MIN) CONFIG.maxIntervalMin = parseInt(remote.MAX_INTERVAL_MIN, 10);
     if (!process.env.HEADLESS && remote.HEADLESS) CONFIG.headless = remote.HEADLESS !== 'false';
     if (!process.env.SLOW_MO && remote.SLOW_MO) CONFIG.slowMo = parseInt(remote.SLOW_MO, 10);
-    if (!process.env.GIST_ID && remote.GIST_ID) { CONFIG.gistId = remote.GIST_ID; log('  + GIST_ID from Gist:', remote.GIST_ID); }
-    log('After remote: email=', !!CONFIG.email, 'token=', !!CONFIG.telegramToken, 'gistId=', CONFIG.gistId || 'empty');
+    if (!process.env.GIST_ID && remote.GIST_ID) {
+      CONFIG.gistId = remote.GIST_ID;
+      log('  + GIST_ID from Gist:', remote.GIST_ID);
+    }
+    log('After remote: email=', !!CONFIG.email, 'password=', !!CONFIG.password, 'token=', !!CONFIG.telegramToken, 'gistId=', CONFIG.gistId || 'empty');
   } catch (err) {
     log('Remote config error:', err.message);
+    log('Remote config: продолжение работы с локальными настройками');
   }
 }
 
@@ -2300,11 +2324,23 @@ async function shutdown() {
 async function main() {
   log('AutoClick v2.1.0 — Запуск...');
   log('Node.js:', process.version);
+  log('Директория:', __dirname);
 
   // Load remote config from Gist if CONFIG_GIST_ID is set
-  await loadRemoteConfig();
+  log('Загрузка remote config...');
+  try {
+    await loadRemoteConfig();
+    log('Remote config загружен');
+  } catch (err) {
+    log('Ошибка загрузки remote config:', err.message);
+  }
 
   // Validate config
+  log('Проверка конфигурации...');
+  log('  EMAIL:', CONFIG.email ? 'задан' : 'НЕ ЗАДАН');
+  log('  PASSWORD:', CONFIG.password ? 'задан' : 'НЕ ЗАДАН');
+  log('  TELEGRAM_TOKEN:', CONFIG.telegramToken ? 'задан' : 'НЕ ЗАДАН');
+  
   if (!CONFIG.email || !CONFIG.password || !CONFIG.telegramToken) {
     console.error('Ошибка: EMAIL, PASSWORD и TELEGRAM_TOKEN обязательны');
     console.error('  Укажите в .env или создайте Gist с config.json и задайте CONFIG_GIST_ID');

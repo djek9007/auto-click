@@ -102,18 +102,28 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
+echo "📄 Загрузка .env из: $ENV_FILE"
 set -a
 source "$ENV_FILE"
 set +a
 
+# Диагностика загруженных переменных
+echo "🔍 Проверка переменных:"
+echo "   EMAIL: ${EMAIL:-НЕ ЗАДАН}"
+echo "   PASSWORD: ${PASSWORD:+задан}"
+echo "   TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:+задан}"
+echo "   CONFIG_GIST_ID: ${CONFIG_GIST_ID:-НЕ ЗАДАН}"
+
 if [ -z "$EMAIL" ] || [ -z "$PASSWORD" ] || [ -z "$TELEGRAM_TOKEN" ]; then
   if [ -z "$CONFIG_GIST_ID" ]; then
-    echo "❌ Не все переменные заданы в .env!"
+    echo "❌ Не все переменные заданы в .env и нет CONFIG_GIST_ID!"
     exit 1
+  else
+    echo "⚠️  Локальные переменные неполные, будут загружены из Gist"
   fi
 fi
 
-echo "✅ Конфигурация: $EMAIL"
+echo "✅ Конфигурация: ${EMAIL:-из Gist}"
 echo "📁 Директория: $SCRIPT_DIR"
 
 # Убираем ВСЕ старые процессы auto-click
@@ -161,13 +171,20 @@ if [ ! -d "$SCRIPT_DIR/node_modules" ]; then
   cd "$SCRIPT_DIR" && npm install --no-fund --no-audit 2>&1 | tail -3
 fi
 
-# Проверка Chrome — ищем именно бинарник, а не просто папку
+# Проверка Chrome — ищем бинарник (Chromium или Google Chrome for Testing)
 CHROME_BIN=$(find "$SCRIPT_DIR/node_modules/.cache/puppeteer" -name "Chromium" -type f 2>/dev/null | head -1)
+if [ -z "$CHROME_BIN" ]; then
+  # На macOS это может быть "Google Chrome for Testing"
+  CHROME_BIN=$(find "$SCRIPT_DIR/node_modules/.cache/puppeteer" -name "Google Chrome for Testing" -type f 2>/dev/null | head -1)
+fi
 if [ -z "$CHROME_BIN" ]; then
   echo "🌐 Установка Chrome для Puppeteer..."
   cd "$SCRIPT_DIR" && $NPX_BIN puppeteer browsers install chrome 2>&1 | tail -3
   # Проверяем снова
   CHROME_BIN=$(find "$SCRIPT_DIR/node_modules/.cache/puppeteer" -name "Chromium" -type f 2>/dev/null | head -1)
+  if [ -z "$CHROME_BIN" ]; then
+    CHROME_BIN=$(find "$SCRIPT_DIR/node_modules/.cache/puppeteer" -name "Google Chrome for Testing" -type f 2>/dev/null | head -1)
+  fi
   if [ -z "$CHROME_BIN" ]; then
     echo "⚠️  Chrome не найден после установки!"
   else
