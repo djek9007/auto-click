@@ -332,15 +332,23 @@ function getKeyboard() {
   }
 }
 
+function isPageValid() {
+  try {
+    return state.page && !state.page.isClosed();
+  } catch {
+    return false;
+  }
+}
+
 function getBrowserStatus() {
-  if (state.browser && state.page) return '✅ Браузер работает';
-  if (state.browser && !state.page) return '⚠️ Браузер открыт, страница не загружена';
+  if (state.browser && isPageValid()) return '✅ Браузер работает';
+  if (state.browser && !isPageValid()) return '⚠️ Браузер открыт, страница не загружена';
   return '❌ Браузер закрыт';
 }
 
 function getRunStatus() {
   if (!state.isRunning) return '⏹ Остановлен';
-  if (!state.browser || !state.page) return '⚠️ Ошибка (браузер не активен)';
+  if (!state.browser || !isPageValid()) return '⚠️ Ошибка (браузер не активен)';
   if (state.clickCount === 0 && state.isRunning) return '🔄 Запускается...';
   return '✅ Работает';
 }
@@ -388,7 +396,7 @@ async function sendMainMenu(chatId, extraText, messageId) {
 }
 
 async function handleStart(chatId, messageId) {
-  if (state.isRunning && state.browser && state.page) {
+  if (state.isRunning && state.browser && isPageValid()) {
     await sendMainMenu(chatId, '⚠️ Учёт уже идёт', messageId);
     return;
   }
@@ -848,7 +856,9 @@ async function handleStats(chatId, messageId) {
     }
   };
 
-  if (!state.page) {
+  if (!isPageValid()) {
+    // Страница отсоединена — сбросить состояние и сообщить пользователю
+    state.page = null;
     text += '❌ Браузер не запущен.\nСначала нажмите <b>▶️ Запустить учёт</b>';
     await reply(text, getKeyboard());
     return;
@@ -947,7 +957,12 @@ async function handleStats(chatId, messageId) {
     }
   } catch (err) {
     log('handleStats error:', err.message);
-    text += '❌ Ошибка: ' + err.message;
+    if (err.message.includes('detached') || err.message.includes('closed')) {
+      state.page = null;
+      text += '❌ Страница была закрыта. Нажмите <b>🔄 Перезапустить</b>.';
+    } else {
+      text += '❌ Ошибка: ' + err.message;
+    }
   }
 
   await reply(text, getKeyboard());
@@ -2058,7 +2073,7 @@ async function startAutoClick() {
 
   // Если уже запущен — проверяем, жив ли браузер
   if (state.isRunning) {
-    if (state.browser && state.page) {
+    if (state.browser && isPageValid()) {
       return; // Всё ок, уже работает
     }
     // Браузер умер — сбрасываем и запускаем заново
@@ -2092,7 +2107,7 @@ async function startAutoClick() {
       await launchBrowser();
     }
 
-    const page = state.page || await state.browser.newPage();
+    const page = isPageValid() ? state.page : await state.browser.newPage();
     state.page = page;
     await setupPage(page);
 
