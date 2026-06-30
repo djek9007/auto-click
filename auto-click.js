@@ -771,20 +771,47 @@ async function handleUpdateCode(chatId, msgId) {
     // Шаг 1: git pull
     const hasGit = fs.existsSync(path.join(__dirname, '.git'));
     if (hasGit) {
+      // Проверяем есть ли коммиты в репозитории
+      let hasCommits = false;
       try {
-        await execCmd('git pull');
-      } catch (err) {
-        log('git pull failed, trying stash:', err.message);
-        await execCmd('git stash && git pull && git stash pop').catch(stashErr => {
-          throw new Error('Ошибка git pull: ' + err.message + '\n(stash failed: ' + stashErr.message + ')');
-        });
+        await execCmd('git log -1');
+        hasCommits = true;
+      } catch {}
+
+      if (!hasCommits) {
+        // .git есть но нет коммитов — инициализируем заново
+        log('Git repo пустой,重新 инициализация...');
+        try {
+          await execCmd('git remote remove origin 2>/dev/null || true');
+          await execCmd('git remote add origin https://github.com/djek9007/auto-click.git');
+          await execCmd('git fetch origin main');
+          await execCmd('git reset --hard origin/main');
+          log('Git repo восстановлен из remote');
+        } catch (initErr) {
+          throw new Error(
+            'GitHub недоступен. Обновите вручную:\n' +
+            '1. Скачайте auto-click.js с GitHub\n' +
+            '2. Замените в ' + __dirname + '\n' +
+            '3. bash start.sh'
+          );
+        }
+      } else {
+        // Есть коммиты — простой git pull
+        try {
+          await execCmd('git pull');
+        } catch (pullErr) {
+          throw new Error(
+            'git pull не удался: ' + pullErr.message + '\n\n' +
+            'Обновите вручную или проверьте сеть.'
+          );
+        }
       }
     } else {
       throw new Error(
         'Git не найден. Обновите вручную:\n' +
-        '1. Скачайте https://github.com/djek9007/auto-click/archive/refs/heads/main.zip\n' +
-        '2. Замените auto-click.js в ' + __dirname + '\n' +
-        '3. Перезапустите: bash start.sh'
+        '1. Скачайте auto-click.js с GitHub\n' +
+        '2. Замените в ' + __dirname + '\n' +
+        '3. bash start.sh'
       );
     }
 
@@ -1288,30 +1315,38 @@ async function launchBrowser() {
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
+        '--no-zygote',
+        '--single-process',
         '--window-size=1280,800',
         '--disable-blink-features=AutomationControlled',
       ],
     });
   } catch (launchErr) {
-    // Если Chrome не найден — ставим автоматически
-    if (launchErr.message && launchErr.message.includes('Could not find Chrome')) {
-      log('Chrome не найден, установка...');
+    const errMsg = launchErr.message || '';
+    const isMissing = errMsg.includes('Could not find Chrome');
+    const isFailed = errMsg.includes('Failed to launch');
+
+    if (isMissing || isFailed) {
+      log('Chrome проблема:', isMissing ? 'не найден' : 'не запускается', '- установка/переустановка...');
+
+      // Удаляем старый кеш и ставим заново
       const { execSync } = require('child_process');
       try {
-        execSync('npx puppeteer browsers install chrome', {
+        execSync('npx puppeteer browsers install chrome --force', {
           cwd: __dirname,
-          timeout: 120000,
+          timeout: 180000,
           stdio: 'inherit',
         });
       } catch (installErr) {
         throw new Error(
-          'Chrome не установлен и не удалось скачать автоматически.\n' +
+          'Chrome не установлен.\n' +
           'Выполните вручную:\n' +
           '  cd ' + __dirname + '\n' +
           '  npx puppeteer browsers install chrome'
         );
       }
-      // Пробуем снова
+
+      // Пробуем снова с дополнительными флагами для macOS
       browser = await puppeteer.launch({
         headless: CONFIG.headless ? 'new' : false,
         slowMo: CONFIG.slowMo,
@@ -1320,6 +1355,8 @@ async function launchBrowser() {
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
           '--disable-gpu',
+          '--no-zygote',
+          '--single-process',
           '--window-size=1280,800',
           '--disable-blink-features=AutomationControlled',
         ],
