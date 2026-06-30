@@ -1083,14 +1083,45 @@ async function setupPage(page) {
 // ─── Authentication ────────────────────────────────────────────────────────────
 async function login(page) {
   log('Проверка авторизации...');
-  await page.goto(CONFIG.targetUrl, { waitUntil: 'networkidle0', timeout: 30000 });
+
+  // Переход на страницу с обработкой ошибок навигации
+  for (let navAttempt = 1; navAttempt <= 3; navAttempt++) {
+    try {
+      await page.goto(CONFIG.targetUrl, { waitUntil: 'networkidle0', timeout: 30000 });
+      break;
+    } catch (err) {
+      if (err.message.includes('context was destroyed') || err.message.includes('navigation')) {
+        log('Навигация прервана (попытка ' + navAttempt + '), повтор...');
+        await sleep(3000);
+        if (navAttempt === 3) throw err;
+      } else {
+        throw err;
+      }
+    }
+  }
+
   await sleep(5000);
 
   // Check if already logged in
-  const isLoggedIn = await checkLoggedIn(page);
-  if (isLoggedIn) {
-    log('Уже авторизован');
-    return true;
+  try {
+    const isLoggedIn = await checkLoggedIn(page);
+    if (isLoggedIn) {
+      log('Уже авторизован');
+      return true;
+    }
+  } catch (err) {
+    if (err.message.includes('context was destroyed')) {
+      log('Контекст потерян после навигации, повторная загрузка...');
+      await page.goto(CONFIG.targetUrl, { waitUntil: 'networkidle0', timeout: 30000 });
+      await sleep(5000);
+      const isLoggedIn = await checkLoggedIn(page);
+      if (isLoggedIn) {
+        log('Уже авторизован (после повтора)');
+        return true;
+      }
+    } else {
+      throw err;
+    }
   }
 
   log('Авторизация не найдена. Запуск входа...');
