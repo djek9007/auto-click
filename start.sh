@@ -12,6 +12,12 @@ if [ "$(uname -s)" = "Darwin" ]; then
   # Есть копия в Shared — переключаемся на неё
   elif [ -d "$PERSISTENT_DIR" ]; then
     echo "📂 Переход в $PERSISTENT_DIR..."
+    # Удаляем исходную папку если это не Shared и не корень
+    if [ "$SCRIPT_DIR" != "/" ] && [ "$SCRIPT_DIR" != "$PERSISTENT_DIR" ] && [ "$SCRIPT_DIR" != "/Users/Shared" ]; then
+      echo "🗑  Удаление исходной папки: $SCRIPT_DIR"
+      rm -rf "$SCRIPT_DIR"
+      echo "✅ Исходная папка удалена"
+    fi
     exec bash "$PERSISTENT_DIR/start.sh" "$@"
   # Первый запуск — копируем
   else
