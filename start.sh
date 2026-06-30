@@ -4,7 +4,21 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PID_FILE="$SCRIPT_DIR/.auto-click.pid"
 ENV_FILE="$SCRIPT_DIR/.env"
 
-# Загружаем переменные из .env если есть
+# Проверяем наличие .env файла
+if [ ! -f "$ENV_FILE" ]; then
+  echo "❌ Файл .env не найден!"
+  echo ""
+  echo "Создайте его из шаблона:"
+  echo "  cp .env.example .env"
+  echo ""
+  echo "Или создайте вручную с содержимым:"
+  echo "  EMAIL=ваш@email.com"
+  echo "  PASSWORD=ваш_пароль"
+  echo "  TELEGRAM_TOKEN=токен_бота"
+  exit 1
+fi
+
+# Загружаем переменные из .env
 if [ -f "$ENV_FILE" ]; then
   set -a
   source "$ENV_FILE"
