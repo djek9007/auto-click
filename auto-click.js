@@ -2226,13 +2226,20 @@ async function main() {
     await registerMachine();
     const lock = await readGist();
     if (lock && lock.active === CONFIG.machineName) {
+      // This machine is already active
       state.machineRole = 'active';
       state.telegramOffset = lock.telegramOffset || 0;
       saveOffset(state.telegramOffset);
       log('Эта машина — активная');
+    } else if (!lock || !lock.active) {
+      // No machine active — become active automatically
+      state.machineRole = 'active';
+      await claimActive();
+      log('Нет активной машины — эта машина стала активной');
     } else {
+      // Another machine is active — standby
       state.machineRole = 'standby';
-      log(`Ожидание. Активная машина: ${lock?.active || 'нет'}`);
+      log(`Ожидание. Активная машина: ${lock.active}`);
       startGistWatcher();
       await new Promise(() => {});
       return;
