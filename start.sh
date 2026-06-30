@@ -245,9 +245,24 @@ echo "🚀 Запуск AutoClick..."
 echo "" >> "$SCRIPT_DIR/output.log"
 echo "═══════════════════════════════════════════════════════════════" >> "$SCRIPT_DIR/output.log"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Запуск start.sh" >> "$SCRIPT_DIR/output.log"
-nohup node "$SCRIPT_DIR/auto-click.js" >> "$SCRIPT_DIR/output.log" 2>&1 &
-NEW_PID=$!
-echo "$NEW_PID" > "$PID_FILE"
-echo "AutoClick запущен, PID: $NEW_PID"
-echo ""
-echo "📋 Логи: tail -f $SCRIPT_DIR/output.log"
+
+# Проверка что output.log доступен для записи
+if ! touch "$SCRIPT_DIR/output.log" 2>/dev/null; then
+  echo "❌ Ошибка: не могу писать в output.log"
+  echo "   Проверьте права: ls -la $SCRIPT_DIR/output.log"
+  exit 1
+fi
+
+# Если передан аргумент --foreground, запускаем в foreground для диагностики
+if [ "$1" = "--foreground" ] || [ "$1" = "-f" ]; then
+  echo "🔍 Запуск в foreground (Ctrl+C для остановки)..."
+  node "$SCRIPT_DIR/auto-click.js" 2>&1 | tee -a "$SCRIPT_DIR/output.log"
+else
+  nohup node "$SCRIPT_DIR/auto-click.js" >> "$SCRIPT_DIR/output.log" 2>&1 &
+  NEW_PID=$!
+  echo "$NEW_PID" > "$PID_FILE"
+  echo "AutoClick запущен, PID: $NEW_PID"
+  echo ""
+  echo "📋 Логи: tail -f $SCRIPT_DIR/output.log"
+  echo "🔍 Для диагностики: bash start.sh --foreground"
+fi

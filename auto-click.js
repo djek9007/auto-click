@@ -2322,17 +2322,26 @@ async function shutdown() {
 
 // ─── Initialization ────────────────────────────────────────────────────────────
 async function main() {
+  // Принудительный flush stdout/stderr для nohup
+  process.stdout.write('');
+  process.stderr.write('');
+  
+  log('═══════════════════════════════════════════════════════════════');
   log('AutoClick v2.1.0 — Запуск...');
   log('Node.js:', process.version);
   log('Директория:', __dirname);
+  log('PID:', process.pid);
+  log('═══════════════════════════════════════════════════════════════');
 
   // Load remote config from Gist if CONFIG_GIST_ID is set
   log('Загрузка remote config...');
+  log('CONFIG_GIST_ID:', CONFIG.configGistId || 'НЕ ЗАДАН');
   try {
     await loadRemoteConfig();
     log('Remote config загружен');
   } catch (err) {
     log('Ошибка загрузки remote config:', err.message);
+    log('Stack:', err.stack);
   }
 
   // Validate config
@@ -2342,9 +2351,9 @@ async function main() {
   log('  TELEGRAM_TOKEN:', CONFIG.telegramToken ? 'задан' : 'НЕ ЗАДАН');
   
   if (!CONFIG.email || !CONFIG.password || !CONFIG.telegramToken) {
-    console.error('Ошибка: EMAIL, PASSWORD и TELEGRAM_TOKEN обязательны');
-    console.error('  Укажите в .env или создайте Gist с config.json и задайте CONFIG_GIST_ID');
-    console.error('  См. .env.example');
+    log('❌ ОШИБКА: EMAIL, PASSWORD и TELEGRAM_TOKEN обязательны');
+    log('  Укажите в .env или создайте Gist с config.json и задайте CONFIG_GIST_ID');
+    log('  См. .env.example');
     process.exit(1);
   }
 
