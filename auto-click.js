@@ -83,6 +83,7 @@ const state = {
   telegramChatId:     _savedSession.chatId     || null,
   lastMenuMessageId:  _savedSession.menuMessageId || null,
   shutdownRequested:  false,
+  nextClickTime:      null,
 };
 
 // ─── Utilities ─────────────────────────────────────────────────────────────────
@@ -152,6 +153,7 @@ function getStatusText() {
     `🔹 Статус: ${getRunStatus()}\n` +
     `🔹 ${getBrowserStatus()}\n` +
     `🔹 Кликов: ${state.clickCount}\n` +
+    `🔹 Следующий клик: ${state.nextClickTime ? state.nextClickTime.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '—'}\n` +
     `━━━━━━━━━━━━━━\n` +
     `⏱ Прошло: ${formatDuration(elapsed)}\n` +
     `⏳ Осталось: ${elapsed > 0 ? formatDuration(Math.max(0, remaining)) : '—'}\n` +
@@ -407,6 +409,7 @@ async function handleRestart(chatId, messageId) {
     await stopAutoClick();
     state.startTime = Date.now();
     state.clickCount = 0;
+    state.nextClickTime = null;
     await startAutoClick();
     const msg = state.isRunning ? '🔄 Учёт перезапущен' : '❌ Ошибка при перезапуске';
     await sendMainMenu(chatId, msg, restartTargetId);
@@ -1649,6 +1652,7 @@ async function activityLoop(page) {
       const elapsed = Date.now() - state.startTime;
       if (elapsed >= maxMs) {
         log('Достигнут лимит в ' + CONFIG.maxHours + ' часов');
+        state.nextClickTime = null;
         await notifyTelegram('✅ ' + CONFIG.maxHours + ' часов истекло. AutoClick завершён');
         await stopAutoClick();
         return;
@@ -1677,6 +1681,7 @@ async function activityLoop(page) {
     const intervalMin = getRandomInt(CONFIG.minIntervalMin, CONFIG.maxIntervalMin);
     const intervalMs = intervalMin * 60 * 1000;
     const nextTime = new Date(Date.now() + intervalMs);
+    state.nextClickTime = nextTime;
     log('Следующая активность в', nextTime.toLocaleTimeString(), '(через ' + intervalMin + ' мин)');
 
     // Wait for next interval (checking shutdown flag every second)
@@ -1765,6 +1770,7 @@ async function startAutoClick() {
 
 async function stopAutoClick() {
   state.isRunning = false;
+  state.nextClickTime = null;
   state.activityPromise = null;
   if (state.browser) {
     try { await state.browser.close(); } catch {}
