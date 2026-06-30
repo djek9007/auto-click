@@ -23,7 +23,7 @@ if [ -f "$PID_FILE" ]; then
 fi
 
 # Kill any remaining instances by PID (безопаснее чем pkill -f)
-for pid in $(ps axo pid,comm | grep '[n]ode' | awk '{print $1}'); do
+for pid in $(ps axo pid,comm | grep '[n]ode' | awk '{print $1}' || true); do
   args=$(ps -p "$pid" -o args= 2>/dev/null)
   if echo "$args" | grep -q 'auto-click.js' && ! echo "$args" | grep -q 'pgrep'; then
     if [ "$pid" != "$OLD_PID" ]; then
