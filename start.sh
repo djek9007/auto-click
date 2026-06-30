@@ -50,19 +50,23 @@ if [ "$SHOULD_RELOCATE" = true ]; then
   set +a
 
   if [ -z "$EMAIL" ] || [ -z "$PASSWORD" ] || [ -z "$TELEGRAM_TOKEN" ]; then
-    echo ""
-    echo "╔══════════════════════════════════════════╗"
-    echo "║  ❌ Не все переменные заданы в .env!     ║"
-    echo "╚══════════════════════════════════════════╝"
-    echo ""
-    [ -z "$EMAIL" ] && echo "  ❌ EMAIL — не задан"
-    [ -z "$PASSWORD" ] && echo "  ❌ PASSWORD — не задан"
-    [ -z "$TELEGRAM_TOKEN" ] && echo "  ❌ TELEGRAM_TOKEN — не задан"
-    echo ""
-    exit 1
+    # If CONFIG_GIST_ID is set, values will be loaded from Gist — skip validation
+    if [ -z "$CONFIG_GIST_ID" ]; then
+      echo ""
+      echo "╔══════════════════════════════════════════╗"
+      echo "║  ❌ Не все переменные заданы в .env!     ║"
+      echo "╚══════════════════════════════════════════╝"
+      echo ""
+      [ -z "$EMAIL" ] && echo "  ❌ EMAIL — не задан"
+      [ -z "$PASSWORD" ] && echo "  ❌ PASSWORD — не задан"
+      [ -z "$TELEGRAM_TOKEN" ] && echo "  ❌ TELEGRAM_TOKEN — не задан"
+      echo ""
+      exit 1
+    fi
+    echo "⚠️  Загрузка из Gist ($CONFIG_GIST_ID)"
   fi
 
-  echo "✅ .env корректен: $EMAIL"
+  echo "✅ .env корректен: ${EMAIL:-из Gist}"
   echo ""
 
   # ─── Шаг 2: Копируем проект ───
@@ -121,12 +125,16 @@ source "$ENV_FILE"
 set +a
 
 if [ -z "$EMAIL" ] || [ -z "$PASSWORD" ] || [ -z "$TELEGRAM_TOKEN" ]; then
-  echo ""
-  echo "╔══════════════════════════════════════════╗"
-  echo "║  ❌ Не все переменные заданы в .env!     ║"
-  echo "╚══════════════════════════════════════════╝"
-  echo ""
-  exit 1
+  # If CONFIG_GIST_ID is set, values will be loaded from Gist — skip validation
+  if [ -z "$CONFIG_GIST_ID" ]; then
+    echo ""
+    echo "╔══════════════════════════════════════════╗"
+    echo "║  ❌ Не все переменные заданы в .env!     ║"
+    echo "╚══════════════════════════════════════════╝"
+    echo ""
+    exit 1
+  fi
+  echo "⚠️  Некоторые переменные не заданы — будут загружены из Gist ($CONFIG_GIST_ID)"
 fi
 
 echo "✅ Конфигурация загружена: $EMAIL"
