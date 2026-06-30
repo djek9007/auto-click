@@ -283,6 +283,15 @@ async function releaseActive() {
   }
 }
 
+async function getActiveMachineName() {
+  if (!CONFIG.gistId) return CONFIG.machineName;
+  try {
+    const lock = await readGist();
+    if (lock && lock.active) return lock.active;
+  } catch {}
+  return 'неизвестно';
+}
+
 function startGistWatcher() {
   if (state.gistCheckTimer) clearInterval(state.gistCheckTimer);
   state.gistCheckTimer = setInterval(async () => {
@@ -396,6 +405,23 @@ async function sendMainMenu(chatId, extraText, messageId) {
 }
 
 async function handleStart(chatId, messageId) {
+  // Проверка: машина в режиме standby
+  if (state.machineRole !== 'active') {
+    const text = `⚠️ Эта машина в режиме ожидания.\n\nАктивная машина: <b>${await getActiveMachineName()}</b>\n\nНажмите кнопку ниже чтобы переключиться на эту машину.`;
+    const kb = [
+      [{ text: `🔄 Переключить на ${CONFIG.machineName}`, callback_data: `switch_${CONFIG.machineName}` }],
+      [{ text: '⬅️ Меню', callback_data: 'menu' }],
+    ];
+    const editId = messageId || state.lastMenuMessageId;
+    if (editId) {
+      const success = await editTelegramMessage(chatId, editId, text, kb);
+      if (success) return;
+    }
+    const newId = await sendTelegramMessage(chatId, text, kb);
+    if (newId) { state.lastMenuMessageId = newId; saveSession(); }
+    return;
+  }
+
   if (state.isRunning && state.browser && isPageValid()) {
     await sendMainMenu(chatId, '⚠️ Учёт уже идёт', messageId);
     return;
@@ -2325,6 +2351,9 @@ async function main() {
         state.machineRole = 'standby';
         log(`Другая машина стала активной: ${lock2.active}`);
         startGistWatcher();
+        // Запускаем Telegram polling даже в standby
+        startTelegramPolling();
+        await sendStartupMenu();
         await new Promise(() => {});
         return;
       }
@@ -2336,6 +2365,9 @@ async function main() {
       state.machineRole = 'standby';
       log(`Ожидание. Активная машина: ${lock.active}`);
       startGistWatcher();
+      // Запускаем Telegram polling даже в standby — чтобы можно было переключать машины
+      startTelegramPolling();
+      await sendStartupMenu();
       await new Promise(() => {});
       return;
     }
