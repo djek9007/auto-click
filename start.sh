@@ -72,7 +72,7 @@ if [ "$SHOULD_RELOCATE" = true ]; then
   # ─── Шаг 2: Копируем проект ───
   echo "📁 Копирование в $PERSISTENT_DIR ..."
   mkdir -p "$PERSISTENT_DIR"
-  rsync -a --exclude='node_modules' --exclude='.git' --exclude='output.log' --exclude='output.log.1' "$SCRIPT_DIR/" "$PERSISTENT_DIR/"
+  rsync -a --exclude='node_modules' --exclude='output.log' --exclude='output.log.1' "$SCRIPT_DIR/" "$PERSISTENT_DIR/"
 
   # Убеждаемся что .env на месте
   if [ ! -f "$PERSISTENT_DIR/.env" ]; then

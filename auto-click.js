@@ -768,7 +768,7 @@ async function handleUpdateCode(chatId, msgId) {
       });
     };
 
-    // Шаг 1: git pull (или загрузка из репозитория если нет .git)
+    // Шаг 1: git pull
     const hasGit = fs.existsSync(path.join(__dirname, '.git'));
     if (hasGit) {
       try {
@@ -780,57 +780,12 @@ async function handleUpdateCode(chatId, msgId) {
         });
       }
     } else {
-      // Нет .git — пробуем git init + pull, если нет — curl zip
-      log('Нет .git директории, попытка инициализации git...');
-      let updated = false;
-
-      // Попытка 1: инициализировать .git и сделать git pull
-      try {
-        await execCmd('git init && git remote add origin https://github.com/djek9007/auto-click.git 2>/dev/null || true');
-        await execCmd('git fetch origin main && git reset --hard origin/main');
-        updated = true;
-        log('Код обновлён через git (инициализирован)');
-      } catch (gitErr) {
-        log('Git init/pull не удался:', gitErr.message);
-      }
-
-      // Попытка 2: скачать zip через curl
-      if (!updated) {
-        log('Загрузка zip из репозитория...');
-        const REPO_URL = 'https://github.com/djek9007/auto-click/archive/refs/heads/main.zip';
-        const ZIP_PATH = path.join(__dirname, '_update.zip');
-        const EXTRACT_DIR = path.join(__dirname, '_update_extract');
-
-        // Проверяем доступность GitHub перед скачиванием
-        try {
-          await execCmd('curl -sL --connect-timeout 5 --max-time 10 -o /dev/null -w "%{http_code}" https://github.com');
-        } catch {
-          throw new Error(
-            'GitHub недоступен из этой сети.\n\n' +
-            'Обновите код вручную:\n' +
-            '1. Скачайте https://github.com/djek9007/auto-click/archive/refs/heads/main.zip\n' +
-            '2. Распакуйте в ' + __dirname + '\n' +
-            '3. Перезапустите бота'
-          );
-        }
-
-        await execCmd(`curl -sL "${REPO_URL}" -o "${ZIP_PATH}"`);
-
-        // Распаковываем
-        await execCmd(`rm -rf "${EXTRACT_DIR}" && mkdir -p "${EXTRACT_DIR}"`);
-        await execCmd(`unzip -o "${ZIP_PATH}" -d "${EXTRACT_DIR}"`);
-
-        // Копируем файлы (кроме .env, node_modules, .git, логов)
-        const extractedDir = path.join(EXTRACT_DIR, 'auto-click-main');
-        const keepFiles = ['.env', 'node_modules', '.git', 'output.log', 'output.log.1',
-                           '.auto-click.pid', '.tg_offset', '.tg_session', '.screenshots'];
-        const excludes = keepFiles.map(f => `--exclude='${f}'`).join(' ');
-        await execCmd(`rsync -a ${excludes} "${extractedDir}/" "${__dirname}/"`);
-
-        // Очистка
-        await execCmd(`rm -rf "${ZIP_PATH}" "${EXTRACT_DIR}"`);
-        log('Код обновлён из репозитория (zip)');
-      }
+      throw new Error(
+        'Git не найден. Обновите вручную:\n' +
+        '1. Скачайте https://github.com/djek9007/auto-click/archive/refs/heads/main.zip\n' +
+        '2. Замените auto-click.js в ' + __dirname + '\n' +
+        '3. Перезапустите: bash start.sh'
+      );
     }
 
     // Шаг 2
