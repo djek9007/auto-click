@@ -99,8 +99,8 @@ if [ "$SHOULD_RELOCATE" = true ]; then
   echo ""
 
   # ─── Шаг 4: Удаляем исходную папку ───
-  # Не удаляем если это /Users/Shared/ или корень системы
-  if [ "$SCRIPT_DIR" != "/" ] && [ "$SCRIPT_DIR" != "/Users/Shared" ] && echo "$SCRIPT_DIR" | grep -q '/Users/'; then
+  # Не удаляем если это /, /Users/Shared, или уже в целевой директории
+  if [ "$SCRIPT_DIR" != "/" ] && [ "$SCRIPT_DIR" != "$PERSISTENT_DIR" ] && [ "$SCRIPT_DIR" != "/Users/Shared" ]; then
     echo "🗑  Удаление исходной папки: $SCRIPT_DIR"
     rm -rf "$SCRIPT_DIR"
     echo "✅ Исходная папка удалена — следов нет"
