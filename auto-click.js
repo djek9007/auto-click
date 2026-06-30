@@ -109,19 +109,20 @@ async function loadRemoteConfig() {
 
     const remote = JSON.parse(file.content);
     log('Remote config загружен из Gist');
+    log('Remote keys:', Object.keys(remote).join(', '));
 
-    // Apply remote values only if not set locally (.env takes priority)
-    if (!process.env.EMAIL && remote.EMAIL) CONFIG.email = remote.EMAIL;
-    if (!process.env.PASSWORD && remote.PASSWORD) CONFIG.password = remote.PASSWORD;
-    if (!process.env.TELEGRAM_TOKEN && remote.TELEGRAM_TOKEN) CONFIG.telegramToken = remote.TELEGRAM_TOKEN;
+    // Apply remote values — local .env takes priority
+    if (!process.env.EMAIL && remote.EMAIL) { CONFIG.email = remote.EMAIL; log('  + EMAIL from Gist'); }
+    if (!process.env.PASSWORD && remote.PASSWORD) { CONFIG.password = remote.PASSWORD; log('  + PASSWORD from Gist'); }
+    if (!process.env.TELEGRAM_TOKEN && remote.TELEGRAM_TOKEN) { CONFIG.telegramToken = remote.TELEGRAM_TOKEN; log('  + TELEGRAM_TOKEN from Gist'); }
     if (!process.env.TARGET_URL && remote.TARGET_URL) CONFIG.targetUrl = remote.TARGET_URL;
     if (!process.env.MAX_HOURS && remote.MAX_HOURS) CONFIG.maxHours = parseInt(remote.MAX_HOURS, 10);
     if (!process.env.MIN_INTERVAL_MIN && remote.MIN_INTERVAL_MIN) CONFIG.minIntervalMin = parseInt(remote.MIN_INTERVAL_MIN, 10);
     if (!process.env.MAX_INTERVAL_MIN && remote.MAX_INTERVAL_MIN) CONFIG.maxIntervalMin = parseInt(remote.MAX_INTERVAL_MIN, 10);
     if (!process.env.HEADLESS && remote.HEADLESS) CONFIG.headless = remote.HEADLESS !== 'false';
     if (!process.env.SLOW_MO && remote.SLOW_MO) CONFIG.slowMo = parseInt(remote.SLOW_MO, 10);
-    if (!process.env.GIST_ID && remote.GIST_ID) CONFIG.gistId = remote.GIST_ID;
-    // NOTE: GITHUB_TOKEN must NOT be in remote config - GitHub auto-revokes exposed tokens
+    if (!process.env.GIST_ID && remote.GIST_ID) { CONFIG.gistId = remote.GIST_ID; log('  + GIST_ID from Gist:', remote.GIST_ID); }
+    log('After remote: email=', !!CONFIG.email, 'token=', !!CONFIG.telegramToken, 'gistId=', CONFIG.gistId || 'empty');
   } catch (err) {
     log('Remote config error:', err.message);
   }
