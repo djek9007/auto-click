@@ -123,8 +123,7 @@ async function loadRemoteConfig() {
     if (!process.env.HEADLESS && remote.HEADLESS) CONFIG.headless = remote.HEADLESS !== 'false';
     if (!process.env.SLOW_MO && remote.SLOW_MO) CONFIG.slowMo = parseInt(remote.SLOW_MO, 10);
     if (!process.env.GIST_ID && remote.GIST_ID) CONFIG.gistId = remote.GIST_ID;
-    if (!process.env.GITHUB_TOKEN && remote.GITHUB_TOKEN) CONFIG.githubToken = remote.GITHUB_TOKEN;
-    if (!process.env.CONFIG_GIST_ID && remote.CONFIG_GIST_ID) CONFIG.configGistId = remote.CONFIG_GIST_ID;
+    // NOTE: GITHUB_TOKEN must NOT be in remote config - GitHub auto-revokes exposed tokens
   } catch (err) {
     log('Remote config error:', err.message);
   }
