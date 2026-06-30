@@ -2322,6 +2322,14 @@ async function shutdown() {
 
 // ─── Initialization ────────────────────────────────────────────────────────────
 async function main() {
+  // СИНХРОННОЕ логирование в самом начале — до любых async операций
+  console.log('═══════════════════════════════════════════════════════════════');
+  console.log('[AutoClick] main() запущен');
+  console.log('[AutoClick] Node.js:', process.version);
+  console.log('[AutoClick] PID:', process.pid);
+  console.log('[AutoClick] Директория:', __dirname);
+  console.log('═══════════════════════════════════════════════════════════════');
+  
   // Принудительный flush stdout/stderr для nohup
   process.stdout.write('');
   process.stderr.write('');
@@ -2437,7 +2445,10 @@ async function main() {
 }
 
 // ─── Entry Point ───────────────────────────────────────────────────────────────
+console.log('[Entry] Скрипт загружен, вызов main()...');
 main().catch((err) => {
-  console.error('Fatal:', err.message);
+  console.error('[Entry] Fatal error в main():');
+  console.error('[Entry] Message:', err.message);
+  console.error('[Entry] Stack:', err.stack);
   process.exit(1);
 });
