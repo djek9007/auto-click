@@ -234,7 +234,12 @@ EOF
 fi
 
 echo "🚀 Запуск AutoClick..."
-nohup node "$SCRIPT_DIR/auto-click.js" > "$SCRIPT_DIR/output.log" 2>&1 &
+echo "" >> "$SCRIPT_DIR/output.log"
+echo "═══════════════════════════════════════════════════════════════" >> "$SCRIPT_DIR/output.log"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Запуск start.sh" >> "$SCRIPT_DIR/output.log"
+nohup node "$SCRIPT_DIR/auto-click.js" >> "$SCRIPT_DIR/output.log" 2>&1 &
 NEW_PID=$!
 echo "$NEW_PID" > "$PID_FILE"
 echo "AutoClick запущен, PID: $NEW_PID"
+echo ""
+echo "📋 Логи: tail -f $SCRIPT_DIR/output.log"
