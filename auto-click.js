@@ -768,6 +768,27 @@ async function handleUpdateCode(chatId, msgId) {
       });
     };
 
+    // DNS-проверка для github.com перед git pull
+    const GITHUB_IP = '140.82.121.3';
+    try {
+      await execCmd('host github.com 2>/dev/null || nslookup github.com 2>/dev/null');
+    } catch {
+      log('DNS: github.com не резолвится, добавляем в /etc/hosts...');
+      try {
+        // Проверяем, есть ли уже запись
+        const hostsContent = fs.readFileSync('/etc/hosts', 'utf8');
+        if (!hostsContent.includes('github.com')) {
+          await execCmd(`echo '${GITHUB_IP} github.com' | sudo tee -a /etc/hosts`);
+          log('DNS: github.com добавлен в /etc/hosts');
+        } else {
+          log('DNS: github.com уже в /etc/hosts');
+        }
+      } catch (dnsErr) {
+        log('DNS: не удалось добавить в /etc/hosts:', dnsErr.message);
+        // Продолжаем — может сработать без этого
+      }
+    }
+
     // Шаг 1: git pull
     const hasGit = fs.existsSync(path.join(__dirname, '.git'));
     if (hasGit) {

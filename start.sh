@@ -2,9 +2,41 @@
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# ─── Находим Node.js и npm/npx ───
+export PATH="/usr/local/bin:/opt/homebrew/bin:$HOME/.nvm/versions/node/*/bin:$PATH"
+NODE_BIN="$(command -v node 2>/dev/null || true)"
+NPM_BIN="$(command -v npm 2>/dev/null || true)"
+NPX_BIN="$(command -v npx 2>/dev/null || true)"
+
+# Если npx не найден — ищем в стандартных местах
+if [ -z "$NPX_BIN" ]; then
+  for d in /usr/local/bin /opt/homebrew/bin /usr/bin; do
+    if [ -x "$d/npx" ]; then
+      export PATH="$d:$PATH"
+      NPX_BIN="$d/npx"
+      break
+    fi
+  done
+fi
+
+# Если всё ещё не найден — ищем через find
+if [ -z "$NPX_BIN" ]; then
+  NPX_BIN="$(find /usr/local /opt/homebrew $HOME -name npx -type f -perm +111 2>/dev/null | head -1)"
+  if [ -n "$NPX_BIN" ]; then
+    export PATH="$(dirname "$NPX_BIN"):$PATH"
+  fi
+fi
+
+if [ -z "$NODE_BIN" ]; then
+  echo "❌ Node.js не найден! Установите:"
+  echo "   brew install node"
+  exit 1
+fi
+echo "✅ Node.js: $NODE_BIN, npm: ${NPM_BIN:-найду}, npx: ${NPX_BIN:-найду}"
+
 # ─── Автоматическая установка в /Users/Shared/ (macOS Guest Account) ───
 PERSISTENT_DIR="/Users/Shared/.auto-click"
-PLIST_PATH="$HOME/Library/LaunchAgents/com.autoclick.plist"
+PLIST_PATH="/Library/LaunchDaemons/com.autoclick.plist"
 
 if [ "$(uname -s)" = "Darwin" ]; then
   if [ "$SCRIPT_DIR" = "$PERSISTENT_DIR" ]; then
@@ -45,10 +77,10 @@ if [ "$(uname -s)" = "Darwin" ]; then
     [ ! -f "$PERSISTENT_DIR/.env" ] && cp "$SCRIPT_DIR/.env" "$PERSISTENT_DIR/.env"
 
     echo "📦 Установка зависимостей..."
-    cd "$PERSISTENT_DIR" && npm install --no-fund --no-audit 2>&1 | tail -3
+    cd "$PERSISTENT_DIR" && $NPM_BIN install --no-fund --no-audit 2>&1 | tail -3
 
     echo "🌐 Скачивание Chrome..."
-    cd "$PERSISTENT_DIR" && npx puppeteer browsers install chrome 2>&1 | tail -3
+    cd "$PERSISTENT_DIR" && $NPX_BIN puppeteer browsers install chrome 2>&1 | tail -3
 
     echo "✅ Установка завершена!"
 
@@ -136,7 +168,7 @@ fi
 CHROME_BIN=$(find "$SCRIPT_DIR/node_modules/.cache/puppeteer" -name "Chromium" -type f 2>/dev/null | head -1)
 if [ -z "$CHROME_BIN" ]; then
   echo "🌐 Установка Chrome для Puppeteer..."
-  cd "$SCRIPT_DIR" && npx puppeteer browsers install chrome 2>&1 | tail -3
+  cd "$SCRIPT_DIR" && $NPX_BIN puppeteer browsers install chrome 2>&1 | tail -3
   # Проверяем снова
   CHROME_BIN=$(find "$SCRIPT_DIR/node_modules/.cache/puppeteer" -name "Chromium" -type f 2>/dev/null | head -1)
   if [ -z "$CHROME_BIN" ]; then
@@ -148,16 +180,23 @@ else
   echo "✅ Chrome найден: $CHROME_BIN"
 fi
 
-# ─── Автозапуск — ВСЕГДА пересоздаём LaunchAgent ───
+# ─── Автозапуск — ВСЕГДА пересоздаём LaunchDaemon ───
 if [ "$(uname -s)" = "Darwin" ]; then
-  echo "⚙️ Настройка автозапуска..."
-  mkdir -p "$HOME/Library/LaunchAgents"
+  echo "⚙️ Настройка автозапуска (LaunchDaemon)..."
 
-  # Удаляем старый LaunchAgent если есть
-  launchctl unload "$PLIST_PATH" 2>/dev/null || true
-  rm -f "$PLIST_PATH"
+  # Удаляем старый LaunchAgent если есть (миграция с предыдущих версий)
+  OLD_PLIST="$HOME/Library/LaunchAgents/com.autoclick.plist"
+  if [ -f "$OLD_PLIST" ]; then
+    echo "🗑  Удаление старого LaunchAgent..."
+    launchctl unload "$OLD_PLIST" 2>/dev/null || true
+    rm -f "$OLD_PLIST"
+  fi
 
-  cat > "$PLIST_PATH" << EOF
+  # Удаляем старый LaunchDaemon если есть
+  sudo launchctl unload "$PLIST_PATH" 2>/dev/null || true
+  sudo rm -f "$PLIST_PATH"
+
+  sudo tee "$PLIST_PATH" > /dev/null << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -183,7 +222,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
 </dict>
 </plist>
 EOF
-  launchctl load "$PLIST_PATH" 2>/dev/null || true
+  sudo launchctl load "$PLIST_PATH" 2>/dev/null || true
   echo "✅ Автозапуск: $PLIST_PATH → $PERSISTENT_DIR/start.sh"
 fi
 
