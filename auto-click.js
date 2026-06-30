@@ -109,7 +109,7 @@ function formatDuration(ms) {
 
 // ─── Telegram Navigation ───────────────────────────────────────────────────────
 // Главное меню
-const BOT_COMMANDS = '/start — Показать меню\n/stop — Остановить\n/status — Статус\n/stats — Статистика\n/restart — Перезапустить\n/update — Обновить код';
+const BOT_COMMANDS = '/start — Показать меню\n/stop — Остановить\n/status — Статус\n/stats — Статистика\n/restart — Перезапустить\n/update — Обновить код\n/help — Справка';
 
 function getKeyboard() {
   if (state.isRunning) {
@@ -117,13 +117,14 @@ function getKeyboard() {
       [{ text: '⏹ Остановить учёт',    callback_data: 'stop' }],
       [{ text: '📊 Обновить статус',    callback_data: 'status' }, { text: '📈 Статистика с сайта', callback_data: 'stats' }],
       [{ text: '🔄 Перезапустить',     callback_data: 'restart' }, { text: '🖥️ Активные процессы', callback_data: 'instances' }],
-      [{ text: '🔽 Обновить код',      callback_data: 'update_code' }],
+      [{ text: '🔽 Обновить код',      callback_data: 'update_code' }, { text: '❓ Помощь', callback_data: 'help' }],
     ];
   } else {
     return [
       [{ text: '▶️ Запустить учёт',    callback_data: 'start' }],
       [{ text: '📊 Обновить статус',    callback_data: 'status' }],
       [{ text: '🖥️ Активные процессы', callback_data: 'instances' }, { text: '🔽 Обновить код', callback_data: 'update_code' }],
+      [{ text: '❓ Помощь',            callback_data: 'help' }],
     ];
   }
 }
