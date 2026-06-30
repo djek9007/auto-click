@@ -21,6 +21,47 @@ const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
 
+// ─── Загрузка .env файла ───────────────────────────────────────────────────────
+// Node.js не читает .env автоматически, поэтому загружаем вручную
+function loadEnvFile() {
+  const envPath = path.join(__dirname, '.env');
+  if (!fs.existsSync(envPath)) return;
+  
+  try {
+    const content = fs.readFileSync(envPath, 'utf8');
+    const lines = content.split('\n');
+    
+    for (const line of lines) {
+      const trimmed = line.trim();
+      // Пропускаем комментарии и пустые строки
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      
+      // Парсим KEY=VALUE
+      const match = trimmed.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/i);
+      if (!match) continue;
+      
+      const key = match[1];
+      let value = match[2];
+      
+      // Убираем кавычки если есть
+      if ((value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      
+      // Устанавливаем только если переменная ещё не задана
+      if (!process.env[key]) {
+        process.env[key] = value;
+      }
+    }
+  } catch (err) {
+    console.error('Ошибка загрузки .env:', err.message);
+  }
+}
+
+// Загружаем .env ДО использования переменных
+loadEnvFile();
+
 function detectMachineName() {
   if (process.env.MACHINE_NAME) return process.env.MACHINE_NAME;
   try {
