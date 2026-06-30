@@ -466,14 +466,41 @@ async function handleUpdateCode(chatId, msgId) {
       });
     };
 
-    // Шаг 1: git pull
-    try {
-      await execCmd('git pull');
-    } catch (err) {
-      log('git pull failed, trying stash:', err.message);
-      await execCmd('git stash && git pull && git stash pop').catch(stashErr => {
-        throw new Error('Ошибка git pull: ' + err.message + '\n(stash failed: ' + stashErr.message + ')');
-      });
+    // Шаг 1: git pull (или загрузка из репозитория если нет .git)
+    const hasGit = fs.existsSync(path.join(__dirname, '.git'));
+    if (hasGit) {
+      try {
+        await execCmd('git pull');
+      } catch (err) {
+        log('git pull failed, trying stash:', err.message);
+        await execCmd('git stash && git pull && git stash pop').catch(stashErr => {
+          throw new Error('Ошибка git pull: ' + err.message + '\n(stash failed: ' + stashErr.message + ')');
+        });
+      }
+    } else {
+      // Нет .git — скачиваем свежий код из репозитория
+      log('Нет .git директории, загрузка из репозитория...');
+      const REPO_URL = 'https://github.com/djek9007/auto-click/archive/refs/heads/main.zip';
+      const ZIP_PATH = path.join(__dirname, '_update.zip');
+      const EXTRACT_DIR = path.join(__dirname, '_update_extract');
+
+      // Скачиваем zip
+      await execCmd(`curl -sL "${REPO_URL}" -o "${ZIP_PATH}"`);
+
+      // Распаковываем
+      await execCmd(`rm -rf "${EXTRACT_DIR}" && mkdir -p "${EXTRACT_DIR}"`);
+      await execCmd(`unzip -o "${ZIP_PATH}" -d "${EXTRACT_DIR}"`);
+
+      // Копируем файлы (кроме .env, node_modules, .git, логов)
+      const extractedDir = path.join(EXTRACT_DIR, 'auto-click-main');
+      const keepFiles = ['.env', 'node_modules', '.git', 'output.log', 'output.log.1',
+                         '.auto-click.pid', '.tg_offset', '.tg_session', '.screenshots'];
+      const excludes = keepFiles.map(f => `--exclude='${f}'`).join(' ');
+      await execCmd(`rsync -a ${excludes} "${extractedDir}/" "${__dirname}/"`);
+
+      // Очистка
+      await execCmd(`rm -rf "${ZIP_PATH}" "${EXTRACT_DIR}"`);
+      log('Код обновлён из репозитория (без git)');
     }
 
     // Шаг 2
