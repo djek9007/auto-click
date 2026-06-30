@@ -287,9 +287,10 @@ function startGistWatcher() {
   if (state.gistCheckTimer) clearInterval(state.gistCheckTimer);
   state.gistCheckTimer = setInterval(async () => {
     try {
+      // Heartbeat first to update our lastSeen without overwriting other changes
+      await heartbeat();
       const lock = await readGist();
       if (!lock) return;
-      await heartbeat();
       if (lock.active === CONFIG.machineName && state.machineRole !== 'active') {
         log('Эта машина назначена активной! Переключение...');
         state.machineRole = 'active';
@@ -2165,8 +2166,9 @@ async function shutdown() {
           lock.machines[CONFIG.machineName].lastSeen = new Date().toISOString();
         }
         await writeGist(lock);
+        log('Gist lock released');
       }
-    } catch {}
+    } catch (err) { log('Shutdown gist error:', err.message); }
   }
 
   if (state.isRunning) {
@@ -2203,12 +2205,12 @@ async function main() {
   }
 
   // Set up signal handlers
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => { shutdown().catch(() => process.exit(1)); });
+  process.on('SIGTERM', () => { shutdown().catch(() => process.exit(1)); });
   process.on('uncaughtException', (err) => {
     log('Непредвиденная ошибка:', err.message);
     shutdown().catch(() => {});
-    setTimeout(() => process.exit(1), 3000);
+    setTimeout(() => process.exit(1), 5000);
   });
 
   process.on('unhandledRejection', (reason) => {
@@ -2233,6 +2235,17 @@ async function main() {
       log('Эта машина — активная');
     } else if (!lock || !lock.active) {
       // No machine active — become active automatically
+      // Random delay to avoid race condition when multiple machines start simultaneously
+      await sleep(getRandomInt(1000, 5000));
+      // Re-check after delay
+      const lock2 = await readGist();
+      if (lock2 && lock2.active && lock2.active !== CONFIG.machineName) {
+        state.machineRole = 'standby';
+        log(`Другая машина стала активной: ${lock2.active}`);
+        startGistWatcher();
+        await new Promise(() => {});
+        return;
+      }
       state.machineRole = 'active';
       await claimActive();
       log('Нет активной машины — эта машина стала активной');
