@@ -802,9 +802,9 @@ async function handleUpdateCode(chatId, msgId) {
 
     log('Обновление завершено. Перезапуск через 2 секунды...');
     setTimeout(() => {
-      // Перезапускаем процесс вместо завершения
       const { spawn } = require('child_process');
-      const child = spawn(process.execPath, [__filename], {
+      const startScript = path.join(__dirname, 'start.sh');
+      const child = spawn('bash', [startScript], {
         detached: true,
         stdio: 'inherit',
         env: process.env,
@@ -1278,18 +1278,56 @@ async function launchBrowser() {
     );
   }
 
-  const browser = await puppeteer.launch({
-    headless: CONFIG.headless ? 'new' : false,
-    slowMo: CONFIG.slowMo,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--window-size=1280,800',
-      '--disable-blink-features=AutomationControlled',
-    ],
-  });
+  let browser;
+  try {
+    browser = await puppeteer.launch({
+      headless: CONFIG.headless ? 'new' : false,
+      slowMo: CONFIG.slowMo,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--window-size=1280,800',
+        '--disable-blink-features=AutomationControlled',
+      ],
+    });
+  } catch (launchErr) {
+    // Если Chrome не найден — ставим автоматически
+    if (launchErr.message && launchErr.message.includes('Could not find Chrome')) {
+      log('Chrome не найден, установка...');
+      const { execSync } = require('child_process');
+      try {
+        execSync('npx puppeteer browsers install chrome', {
+          cwd: __dirname,
+          timeout: 120000,
+          stdio: 'inherit',
+        });
+      } catch (installErr) {
+        throw new Error(
+          'Chrome не установлен и не удалось скачать автоматически.\n' +
+          'Выполните вручную:\n' +
+          '  cd ' + __dirname + '\n' +
+          '  npx puppeteer browsers install chrome'
+        );
+      }
+      // Пробуем снова
+      browser = await puppeteer.launch({
+        headless: CONFIG.headless ? 'new' : false,
+        slowMo: CONFIG.slowMo,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--window-size=1280,800',
+          '--disable-blink-features=AutomationControlled',
+        ],
+      });
+    } else {
+      throw launchErr;
+    }
+  }
 
   state.browser = browser;
   log('Браузер запущен');
