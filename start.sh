@@ -87,6 +87,12 @@ if [ "$SHOULD_RELOCATE" = true ]; then
   echo "📦 Установка зависимостей..."
   cd "$PERSISTENT_DIR" && npm install --no-fund --no-audit 2>&1 | tail -3
 
+  # Устанавливаем Chrome для Puppeteer если нужно
+  if ! npx puppeteer browsers installed 2>/dev/null | grep -q chrome; then
+    echo "🌐 Скачивание Chrome для Puppeteer..."
+    cd "$PERSISTENT_DIR" && npx puppeteer browsers install chrome 2>&1 | tail -3
+  fi
+
   echo ""
   echo "✅ Установка завершена!"
   echo "📁 Проект: $PERSISTENT_DIR"
@@ -176,6 +182,11 @@ fi
 if [ ! -d "$SCRIPT_DIR/node_modules" ]; then
   echo "📦 Установка зависимостей (npm install)..."
   cd "$SCRIPT_DIR" && npm install --no-fund --no-audit 2>&1 | tail -3
+  # Устанавливаем Chrome для Puppeteer если нужно
+  if ! npx puppeteer browsers installed 2>/dev/null | grep -q chrome; then
+    echo "🌐 Скачивание Chrome для Puppeteer..."
+    cd "$SCRIPT_DIR" && npx puppeteer browsers install chrome 2>&1 | tail -3
+  fi
 fi
 
 nohup node "$SCRIPT_DIR/auto-click.js" > "$SCRIPT_DIR/output.log" 2>&1 &
