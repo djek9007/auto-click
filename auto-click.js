@@ -19,6 +19,22 @@
 
 const fs   = require('fs');
 const path = require('path');
+const os   = require('os');
+
+function detectMachineName() {
+  if (process.env.MACHINE_NAME) return process.env.MACHINE_NAME;
+  try {
+    const { execSync } = require('child_process');
+    if (process.platform === 'darwin') {
+      return execSync('scutil --get ComputerName', { encoding: 'utf8', timeout: 3000 }).trim();
+    } else if (process.platform === 'linux') {
+      return execSync('hostname', { encoding: 'utf8', timeout: 3000 }).trim();
+    } else if (process.platform === 'win32') {
+      return process.env.COMPUTERNAME || os.hostname();
+    }
+  } catch {}
+  return os.hostname();
+}
 
 const OFFSET_FILE  = path.join(__dirname, '.tg_offset');
 const SESSION_FILE = path.join(__dirname, '.tg_session');
@@ -64,6 +80,11 @@ const CONFIG = {
   headless:        process.env.HEADLESS !== 'false',
   slowMo:          parseInt(process.env.SLOW_MO || '0', 10),
 
+  // Multi-machine coordination
+  machineName:     detectMachineName(),
+  gistId:          process.env.GIST_ID || '',
+  githubToken:     process.env.GITHUB_TOKEN || '',
+
   // School coordinates for geolocation override
   latitude:        51.089159,
   longitude:       71.415595,
@@ -84,6 +105,8 @@ const state = {
   lastMenuMessageId:  _savedSession.menuMessageId || null,
   shutdownRequested:  false,
   nextClickTime:      null,
+  machineRole:        'standby',
+  gistCheckTimer:     null,
 };
 
 // ─── Utilities ─────────────────────────────────────────────────────────────────
@@ -108,9 +131,150 @@ function formatDuration(ms) {
   return `${h}ч ${m}м`;
 }
 
+// ─── GitHub Gist — Multi-Machine Coordination ────────────────────────────────
+async function gistFetch(url, options = {}) {
+  if (!CONFIG.githubToken) return null;
+  try {
+    const resp = await fetchWithTimeout(url, {
+      ...options,
+      headers: {
+        'Authorization': `token ${CONFIG.githubToken}`,
+        'Accept': 'application/vnd.github.v3+json',
+        ...(options.headers || {}),
+      },
+      timeout: 10000,
+    });
+    return resp;
+  } catch (err) {
+    log('Gist fetch error:', err.message);
+    return null;
+  }
+}
+
+async function readGist() {
+  if (!CONFIG.gistId) return null;
+  const resp = await gistFetch(`https://api.github.com/gists/${CONFIG.gistId}`);
+  if (!resp) return null;
+  try {
+    const data = await resp.json();
+    if (!data.files || !data.files['machine-lock.json']) return null;
+    return JSON.parse(data.files['machine-lock.json'].content);
+  } catch (err) {
+    log('Gist parse error:', err.message);
+    return null;
+  }
+}
+
+async function writeGist(data) {
+  if (!CONFIG.gistId) return false;
+  const resp = await gistFetch(`https://api.github.com/gists/${CONFIG.gistId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      files: { 'machine-lock.json': { content: JSON.stringify(data, null, 2) } },
+    }),
+  });
+  if (!resp) return false;
+  try {
+    const r = await resp.json();
+    return !!r.id;
+  } catch { return false; }
+}
+
+async function registerMachine() {
+  if (!CONFIG.gistId) return;
+  const lock = await readGist() || { active: null, telegramOffset: 0, machines: {} };
+  if (!lock.machines) lock.machines = {};
+  lock.machines[CONFIG.machineName] = {
+    lastSeen: new Date().toISOString(),
+    status: 'standby',
+    email: CONFIG.email || '',
+  };
+  await writeGist(lock);
+  log(`Машина ${CONFIG.machineName} зарегистрирована в Gist`);
+}
+
+async function heartbeat() {
+  if (!CONFIG.gistId) return;
+  try {
+    const lock = await readGist();
+    if (!lock) return;
+    if (!lock.machines) lock.machines = {};
+    const entry = lock.machines[CONFIG.machineName] || {};
+    entry.lastSeen = new Date().toISOString();
+    entry.email = CONFIG.email || '';
+    if (entry.status !== 'active') entry.status = 'standby';
+    lock.machines[CONFIG.machineName] = entry;
+    await writeGist(lock);
+  } catch (err) {
+    log('Heartbeat error:', err.message);
+  }
+}
+
+async function claimActive() {
+  if (!CONFIG.gistId) return false;
+  const lock = await readGist();
+  if (!lock) return false;
+  lock.active = CONFIG.machineName;
+  lock.telegramOffset = state.telegramOffset;
+  if (!lock.machines) lock.machines = {};
+  lock.machines[CONFIG.machineName] = {
+    lastSeen: new Date().toISOString(),
+    status: 'active',
+    email: CONFIG.email || '',
+  };
+  await writeGist(lock);
+  return true;
+}
+
+async function releaseActive() {
+  if (!CONFIG.gistId) return;
+  try {
+    const lock = await readGist();
+    if (!lock) return;
+    if (lock.active === CONFIG.machineName) {
+      lock.active = null;
+    }
+    if (lock.machines && lock.machines[CONFIG.machineName]) {
+      lock.machines[CONFIG.machineName].status = 'standby';
+      lock.machines[CONFIG.machineName].lastSeen = new Date().toISOString();
+    }
+    lock.telegramOffset = state.telegramOffset;
+    await writeGist(lock);
+  } catch (err) {
+    log('releaseActive error:', err.message);
+  }
+}
+
+function startGistWatcher() {
+  if (state.gistCheckTimer) clearInterval(state.gistCheckTimer);
+  state.gistCheckTimer = setInterval(async () => {
+    try {
+      const lock = await readGist();
+      if (!lock) return;
+      await heartbeat();
+      if (lock.active === CONFIG.machineName && state.machineRole !== 'active') {
+        log('Эта машина назначена активной! Переключение...');
+        state.machineRole = 'active';
+        state.telegramOffset = lock.telegramOffset || 0;
+        saveOffset(state.telegramOffset);
+        clearInterval(state.gistCheckTimer);
+        state.gistCheckTimer = null;
+        startTelegramPolling();
+        await sendStartupMenu();
+        if (process.env.AUTO_START === 'true') {
+          await startAutoClick();
+        }
+      }
+    } catch (err) {
+      log('Gist check error:', err.message);
+    }
+  }, 30000);
+}
+
 // ─── Telegram Navigation ───────────────────────────────────────────────────────
 // Главное меню
-const BOT_COMMANDS = '/start — Показать меню\n/stop — Остановить\n/status — Статус\n/stats — Статистика\n/restart — Перезапустить\n/update — Обновить код\n/help — Справка';
+const BOT_COMMANDS = '/start — Показать меню\n/stop — Остановить\n/status — Статус\n/stats — Статистика\n/machines — Машины\n/restart — Перезапустить\n/update — Обновить код\n/help — Справка';
 
 function getKeyboard() {
   if (state.isRunning) {
@@ -146,8 +310,10 @@ function getRunStatus() {
 function getStatusText() {
   const elapsed = state.startTime && state.isRunning ? Date.now() - state.startTime : 0;
   const remaining = CONFIG.maxHours * 3600000 - elapsed;
+  const roleLabel = state.machineRole === 'active' ? 'Активна' : 'Ожидание';
 
   return (
+    `🖥️ <b>${CONFIG.machineName}</b> (${roleLabel})\n` +
     '🤖 <b>AutoClick</b>\n' +
     '━━━━━━━━━━━━━━\n' +
     `🔹 Статус: ${getRunStatus()}\n` +
@@ -231,6 +397,12 @@ async function handleStop(chatId, messageId) {
     return;
   }
   await stopAutoClick();
+
+  // Release gist lock so another machine can take over
+  if (CONFIG.gistId) {
+    await releaseActive();
+  }
+
   await sendMainMenu(chatId, '⏹ Учёт остановлен', messageId);
 }
 
@@ -250,6 +422,7 @@ async function handleHelp(chatId, messageId) {
     '',
     '<b>Информация:</b>',
     '  /stats — Статистика с сайта',
+    '  /machines — Список машин',
     '  /help — Эта справка',
     '',
     '<b>Системные:</b>',
@@ -259,7 +432,7 @@ async function handleHelp(chatId, messageId) {
     '  ▶️ Запустить учёт — Начать отсчёт времени',
     '  ⏹ Остановить учёт — Остановить',
     '  📊 Обновить статус — Обновить информацию',
-    '  🖥️ Активные процессы — Список запущенных экземпляров',
+    '  🖥️ Машины — Список и переключение машин',
   ].join('\n');
 
   const kb = [[{ text: '⬅️ Меню', callback_data: 'menu' }]];
@@ -329,32 +502,82 @@ async function handleKillOthers(chatId, messageId) {
 }
 
 async function handleInstances(chatId, messageId) {
+  const editId = messageId || state.lastMenuMessageId;
+
+  // Gist-based machine list (multi-machine mode)
+  if (CONFIG.gistId) {
+    const lock = await readGist();
+    if (!lock) {
+      const text = '❌ Не удалось прочитать реестр машин';
+      const kb = [[{ text: '⬅️ Меню', callback_data: 'menu' }]];
+      if (editId) await editTelegramMessage(chatId, editId, text, kb);
+      else { const n = await sendTelegramMessage(chatId, text, kb); if (n) { state.lastMenuMessageId = n; saveSession(); } }
+      return;
+    }
+
+    let text = '🖥️ <b>Машины AutoClick</b>\n\n';
+    const machines = lock.machines || {};
+    const names = Object.keys(machines).sort();
+
+    for (const name of names) {
+      const m = machines[name];
+      const isActive = lock.active === name;
+      const lastSeen = new Date(m.lastSeen);
+      const ago = Math.floor((Date.now() - lastSeen.getTime()) / 1000);
+      const isOnline = ago < 120;
+
+      const icon = isActive ? '✅' : isOnline ? '⏸' : '❌';
+      const statusText = isActive ? 'АКТИВНА' : isOnline ? 'Ожидание' : 'Офлайн';
+      const agoText = ago < 60 ? `${ago}с` : `${Math.floor(ago / 60)}м`;
+      const isCurrent = name === CONFIG.machineName;
+
+      text += `${icon} <b>${name}</b> — ${statusText} (${agoText} назад)${isCurrent ? ' ← этот бот' : ''}\n`;
+    }
+
+    if (names.length === 0) {
+      text += 'Нет зарегистрированных машин.';
+    }
+
+    text += `\n\nТекущая активная: <b>${lock.active || 'нет'}</b>`;
+
+    const keyboard = [];
+    for (const name of names) {
+      if (name !== lock.active) {
+        keyboard.push([{ text: `🔄 Включить ${name}`, callback_data: `switch_${name}` }]);
+      }
+    }
+    keyboard.push([
+      { text: '🔄 Обновить', callback_data: 'instances' },
+      { text: '⬅️ Меню', callback_data: 'menu' },
+    ]);
+
+    let success = false;
+    if (editId) success = await editTelegramMessage(chatId, editId, text, keyboard);
+    if (!success) {
+      const n = await sendTelegramMessage(chatId, text, keyboard);
+      if (n) { state.lastMenuMessageId = n; saveSession(); }
+    }
+    return;
+  }
+
+  // Fallback: local PID-based instance list (single-machine mode)
   const { execSync } = require('child_process');
   let pids = [];
   try {
-    // Используем ps + grep вместо pgrep -f, чтобы исключить ложные
-    // срабатывания на обёртке sh -c, которую execSync создаёт под капотом.
-    // pgrep -f матчит sh -c pgrep ... потому что аргумент node.*auto-click.js
-    // присутствует в командной строке shell-обёртки.
     const out = execSync(
       "ps axo pid,comm | grep '[n]ode' | awk '{print $1}'",
       { encoding: 'utf8' }
     ).trim();
     const nodePids = out ? out.split('\n').map(Number).filter(Boolean) : [];
-
-    // Проверяем, какой из node-процессов действительно запущен с auto-click.js
     pids = nodePids.filter((pid) => {
       try {
         const args = execSync('ps -p ' + pid + ' -o args=', { encoding: 'utf8', timeout: 2000 }).trim();
         return args.includes('auto-click.js') && !args.includes('pgrep');
-      } catch {
-        return false;
-      }
+      } catch { return false; }
     });
   } catch {}
 
   const others = pids.filter(p => p !== process.pid);
-  const editId = messageId || state.lastMenuMessageId;
 
   let text = `🖥️ <b>Экземпляры AutoClick</b>\n\n`;
   text += `▸ Текущий: PID <code>${process.pid}</code> (этот бот)\n`;
@@ -363,9 +586,7 @@ async function handleInstances(chatId, messageId) {
     text += '\n✅ Других экземпляров нет.';
     const kb = [[{ text: '⬅️ Меню', callback_data: 'menu' }]];
     let success = false;
-    if (editId) {
-      success = await editTelegramMessage(chatId, editId, text, kb);
-    }
+    if (editId) success = await editTelegramMessage(chatId, editId, text, kb);
     if (!success) {
       const n = await sendTelegramMessage(chatId, text, kb);
       if (n) { state.lastMenuMessageId = n; saveSession(); }
@@ -388,13 +609,48 @@ async function handleInstances(chatId, messageId) {
   keyboard.push([{ text: '🔄 Обновить', callback_data: 'instances' }, { text: '⬅️ Меню', callback_data: 'menu' }]);
 
   let success = false;
-  if (editId) {
-    success = await editTelegramMessage(chatId, editId, text, keyboard);
-  }
+  if (editId) success = await editTelegramMessage(chatId, editId, text, keyboard);
   if (!success) {
     const n = await sendTelegramMessage(chatId, text, keyboard);
     if (n) { state.lastMenuMessageId = n; saveSession(); }
   }
+}
+
+async function handleSwitchMachine(chatId, messageId, targetName) {
+  if (!CONFIG.gistId) {
+    await sendMainMenu(chatId, '❌ Переключение машин недоступно (нет GIST_ID)', messageId);
+    return;
+  }
+
+  const editId = messageId || state.lastMenuMessageId;
+  const text = `🔄 Переключение на <b>${targetName}</b>...`;
+  if (editId) await editTelegramMessage(chatId, editId, text, [[{ text: '⏳...', callback_data: 'noop' }]]);
+
+  const lock = await readGist();
+  if (!lock) {
+    await sendMainMenu(chatId, '❌ Ошибка чтения реестра', messageId);
+    return;
+  }
+
+  lock.active = targetName;
+  lock.telegramOffset = state.telegramOffset;
+  if (!lock.machines) lock.machines = {};
+  lock.machines[targetName] = lock.machines[targetName] || {};
+  lock.machines[targetName].lastSeen = new Date().toISOString();
+  lock.machines[targetName].status = 'standby';
+  await writeGist(lock);
+
+  await stopAutoClick();
+  stopTelegramPolling();
+  state.machineRole = 'standby';
+
+  await sendTelegramMessage(state.telegramChatId,
+    `✅ Переключено на <b>${targetName}</b>\n\n` +
+    `Эта машина (${CONFIG.machineName}) переведена в режим ожидания.\n` +
+    `Машина ${targetName} запустится через ~30 сек.`
+  );
+
+  startGistWatcher();
 }
 
 async function handleRestart(chatId, messageId) {
@@ -683,6 +939,7 @@ async function setupBotCommands() {
       { command: 'stop',    description: 'Остановить учёт' },
       { command: 'status',  description: 'Текущий статус' },
       { command: 'stats',   description: 'Статистика с сайта' },
+      { command: 'machines', description: 'Список машин' },
       { command: 'restart', description: 'Перезапустить' },
       { command: 'update',  description: 'Обновить код' },
       { command: 'help',    description: 'Справка по командам' },
@@ -833,7 +1090,10 @@ async function pollTelegram() {
           case 'update_code': handleUpdateCode(chatId, msgId).catch(err => log('Callback update_code error:', err.message)); break;
           case 'help':        handleHelp(chatId, msgId).catch(err => log('Callback help error:', err.message)); break;
           default:
-            if (cbData.startsWith('kill_')) {
+            if (cbData.startsWith('switch_')) {
+              const targetName = cbData.slice(7);
+              handleSwitchMachine(chatId, msgId, targetName).catch(err => log('Callback switch error:', err.message));
+            } else if (cbData.startsWith('kill_')) {
               const pid = parseInt(cbData.slice(5));
               handleKillPid(chatId, msgId, pid).catch(err => log('Callback kill_pid error:', err.message));
             } else {
@@ -871,6 +1131,8 @@ async function pollTelegram() {
         handleShowMenu(msg.chat.id).catch(err => log('Text menu error:', err.message));
       } else if (text === '/help' || text === 'help' || text === 'помощь' || text === 'справка') {
         handleHelp(msg.chat.id).catch(err => log('Text help error:', err.message));
+      } else if (text === '/machines' || text === 'машины' || text === 'machines') {
+        handleInstances(msg.chat.id).catch(err => log('Text machines error:', err.message));
       } else {
         // Любое другое сообщение — просто показываем меню в чистоте (без дубликатов)
         handleShowMenu(msg.chat.id).catch(err => log('Text default error:', err.message));
@@ -1853,6 +2115,23 @@ async function shutdown() {
   log('Завершение работы...');
   stopTelegramPolling();
 
+  if (state.gistCheckTimer) clearInterval(state.gistCheckTimer);
+
+  // Release gist lock on shutdown
+  if (CONFIG.gistId && state.machineRole === 'active') {
+    try {
+      const lock = await readGist();
+      if (lock) {
+        if (lock.active === CONFIG.machineName) lock.active = null;
+        if (lock.machines && lock.machines[CONFIG.machineName]) {
+          lock.machines[CONFIG.machineName].status = 'offline';
+          lock.machines[CONFIG.machineName].lastSeen = new Date().toISOString();
+        }
+        await writeGist(lock);
+      }
+    } catch {}
+  }
+
   if (state.isRunning) {
     await notifyTelegram('⏹ Сервер остановлен');
   }
@@ -1899,14 +2178,37 @@ async function main() {
   // Настраиваем меню команд в Telegram (кнопка слева от ввода)
   await setupBotCommands();
 
-  // Если AUTO_START=true — запускаем автоклик сразу без команды из Telegram
+  log(`Машина: ${CONFIG.machineName}`);
+
+  // Multi-machine coordination via GitHub Gist
+  if (CONFIG.gistId && CONFIG.githubToken) {
+    log('Multi-machine режим: Gist координация активна');
+    await registerMachine();
+    const lock = await readGist();
+    if (lock && lock.active === CONFIG.machineName) {
+      state.machineRole = 'active';
+      state.telegramOffset = lock.telegramOffset || 0;
+      saveOffset(state.telegramOffset);
+      log('Эта машина — активная');
+    } else {
+      state.machineRole = 'standby';
+      log(`Ожидание. Активная машина: ${lock?.active || 'нет'}`);
+      startGistWatcher();
+      await new Promise(() => {});
+      return;
+    }
+  } else {
+    state.machineRole = 'active';
+    log('Multi-machine отключён (нет GIST_ID)');
+  }
+
+  // Active machine: start Telegram polling
   if (process.env.AUTO_START === 'true') {
     log('AUTO_START: запуск автоклика без команды Telegram...');
     startTelegramPolling();
     await sendStartupMenu();
     await startAutoClick();
   } else {
-    // Ждём команду /start из Telegram — сами ничего не запускаем
     startTelegramPolling();
     await sendStartupMenu();
   }
