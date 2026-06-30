@@ -7,19 +7,15 @@ PERSISTENT_DIR="/Users/Shared/.auto-click"
 PLIST_PATH="$HOME/Library/LaunchAgents/com.autoclick.plist"
 
 if [ "$(uname -s)" = "Darwin" ]; then
-  # Уже в правильной папке — запускаем
   if [ "$SCRIPT_DIR" = "$PERSISTENT_DIR" ]; then
     echo "✅ Запуск из $PERSISTENT_DIR"
-  # Есть копия в Shared — переключаемся на неё
   elif [ -d "$PERSISTENT_DIR" ]; then
     echo "📂 Переход в $PERSISTENT_DIR..."
     if [ "$SCRIPT_DIR" != "/" ] && [ "$SCRIPT_DIR" != "$PERSISTENT_DIR" ] && [ "$SCRIPT_DIR" != "/Users/Shared" ]; then
-      echo "🗑  Удаление исходной папки: $SCRIPT_DIR"
+      echo "🗑  Удаление: $SCRIPT_DIR"
       rm -rf "$SCRIPT_DIR"
-      echo "✅ Исходная папка удалена"
     fi
     exec bash "$PERSISTENT_DIR/start.sh" "$@"
-  # Первый запуск — копируем
   else
     echo ""
     echo "╔══════════════════════════════════════════════════╗"
@@ -29,7 +25,6 @@ if [ "$(uname -s)" = "Darwin" ]; then
 
     if [ ! -f "$SCRIPT_DIR/.env" ]; then
       echo "❌ Файл .env не найден в $SCRIPT_DIR"
-      echo "   cp .env.example .env"
       exit 1
     fi
 
@@ -44,28 +39,22 @@ if [ "$(uname -s)" = "Darwin" ]; then
       fi
     fi
 
-    # Копируем проект
     echo "📁 Копирование в $PERSISTENT_DIR ..."
     mkdir -p "$PERSISTENT_DIR"
     rsync -a --exclude='node_modules' --exclude='output.log' --exclude='output.log.1' "$SCRIPT_DIR/" "$PERSISTENT_DIR/"
-
     [ ! -f "$PERSISTENT_DIR/.env" ] && cp "$SCRIPT_DIR/.env" "$PERSISTENT_DIR/.env"
 
-    # Устанавливаем зависимости
     echo "📦 Установка зависимостей..."
     cd "$PERSISTENT_DIR" && npm install --no-fund --no-audit 2>&1 | tail -3
 
-    # Скачиваем Chrome для Puppeteer
     echo "🌐 Скачивание Chrome..."
     cd "$PERSISTENT_DIR" && npx puppeteer browsers install chrome 2>&1 | tail -3
 
     echo "✅ Установка завершена!"
 
-    # Удаляем исходную папку
     if [ "$SCRIPT_DIR" != "/" ] && [ "$SCRIPT_DIR" != "$PERSISTENT_DIR" ]; then
-      echo "🗑  Удаление исходной папки: $SCRIPT_DIR"
+      echo "🗑  Удаление: $SCRIPT_DIR"
       rm -rf "$SCRIPT_DIR"
-      echo "✅ Исходная папка удалена"
     fi
 
     exec bash "$PERSISTENT_DIR/start.sh" "$@"
@@ -127,18 +116,31 @@ if [ ! -d "$SCRIPT_DIR/node_modules" ]; then
   cd "$SCRIPT_DIR" && npm install --no-fund --no-audit 2>&1 | tail -3
 fi
 
-# Установка Chrome если нужно
-CHROME_DIR="$SCRIPT_DIR/node_modules/.cache/puppeteer"
-if [ ! -d "$CHROME_DIR" ] || [ -z "$(ls "$CHROME_DIR" 2>/dev/null)" ]; then
+# Проверка Chrome — ищем именно бинарник, а не просто папку
+CHROME_BIN=$(find "$SCRIPT_DIR/node_modules/.cache/puppeteer" -name "Chromium" -type f 2>/dev/null | head -1)
+if [ -z "$CHROME_BIN" ]; then
   echo "🌐 Установка Chrome для Puppeteer..."
   cd "$SCRIPT_DIR" && npx puppeteer browsers install chrome 2>&1 | tail -3
+  # Проверяем снова
+  CHROME_BIN=$(find "$SCRIPT_DIR/node_modules/.cache/puppeteer" -name "Chromium" -type f 2>/dev/null | head -1)
+  if [ -z "$CHROME_BIN" ]; then
+    echo "⚠️  Chrome не найден после установки!"
+  else
+    echo "✅ Chrome установлен: $CHROME_BIN"
+  fi
+else
+  echo "✅ Chrome найден: $CHROME_BIN"
 fi
 
-# ─── Автозапуск при входе в систему (LaunchAgent) ───
-if [ "$(uname -s)" = "Darwin" ] && [ ! -f "$PLIST_PATH" ]; then
+# ─── Автозапуск — ВСЕГДА пересоздаём LaunchAgent ───
+if [ "$(uname -s)" = "Darwin" ]; then
   echo "⚙️ Настройка автозапуска..."
-  NODE_BIN="$(command -v node || echo /usr/local/bin/node)"
   mkdir -p "$HOME/Library/LaunchAgents"
+
+  # Удаляем старый LaunchAgent если есть
+  launchctl unload "$PLIST_PATH" 2>/dev/null || true
+  rm -f "$PLIST_PATH"
+
   cat > "$PLIST_PATH" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -150,24 +152,23 @@ if [ "$(uname -s)" = "Darwin" ] && [ ! -f "$PLIST_PATH" ]; then
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>${SCRIPT_DIR}/start.sh</string>
+        <string>${PERSISTENT_DIR}/start.sh</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <false/>
     <key>WorkingDirectory</key>
-    <string>${SCRIPT_DIR}</string>
+    <string>${PERSISTENT_DIR}</string>
     <key>StandardOutPath</key>
-    <string>${SCRIPT_DIR}/output.log</string>
+    <string>${PERSISTENT_DIR}/output.log</string>
     <key>StandardErrorPath</key>
-    <string>${SCRIPT_DIR}/output.log</string>
+    <string>${PERSISTENT_DIR}/output.log</string>
 </dict>
 </plist>
 EOF
-  launchctl unload "$PLIST_PATH" 2>/dev/null || true
   launchctl load "$PLIST_PATH" 2>/dev/null || true
-  echo "✅ Автозапуск настроен: $PLIST_PATH"
+  echo "✅ Автозапуск: $PLIST_PATH → $PERSISTENT_DIR/start.sh"
 fi
 
 echo "🚀 Запуск AutoClick..."
