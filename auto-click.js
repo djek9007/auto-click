@@ -953,7 +953,7 @@ async function handleStats(chatId, messageId) {
 }
 
 // ─── Telegram API ──────────────────────────────────────────────────────────────
-const TELEGRAM_API = `https://api.telegram.org/bot${CONFIG.telegramToken}`;
+function getTelegramApi() { return `https://api.telegram.org/bot${CONFIG.telegramToken}`; }
 
 // Вспомогательный хелпер для fetch с таймаутом, чтобы предотвратить зависание бота
 async function fetchWithTimeout(resource, options = {}) {
@@ -981,7 +981,7 @@ async function setupBotCommands() {
       { command: 'update',  description: 'Обновить код' },
       { command: 'help',    description: 'Справка по командам' },
     ];
-    await fetchWithTimeout(`${TELEGRAM_API}/setMyCommands`, {
+    await fetchWithTimeout(`${getTelegramApi()}/setMyCommands`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ commands }),
@@ -997,7 +997,7 @@ async function sendTelegramMessage(chatId, text, keyboard) {
   try {
     const body = { chat_id: chatId, text, parse_mode: 'HTML' };
     if (keyboard) body.reply_markup = { inline_keyboard: keyboard };
-    const resp = await fetchWithTimeout(`${TELEGRAM_API}/sendMessage`, {
+    const resp = await fetchWithTimeout(`${getTelegramApi()}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -1015,7 +1015,7 @@ async function editTelegramMessage(chatId, messageId, text, keyboard) {
   try {
     const body = { chat_id: chatId, message_id: messageId, text, parse_mode: 'HTML' };
     if (keyboard) body.reply_markup = { inline_keyboard: keyboard };
-    const resp = await fetchWithTimeout(`${TELEGRAM_API}/editMessageText`, {
+    const resp = await fetchWithTimeout(`${getTelegramApi()}/editMessageText`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -1037,7 +1037,7 @@ async function editTelegramMessage(chatId, messageId, text, keyboard) {
 async function deleteTelegramMessage(chatId, messageId) {
   if (!CONFIG.telegramToken || !chatId || !messageId) return false;
   try {
-    const resp = await fetchWithTimeout(`${TELEGRAM_API}/deleteMessage`, {
+    const resp = await fetchWithTimeout(`${getTelegramApi()}/deleteMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, message_id: messageId }),
@@ -1053,7 +1053,7 @@ async function deleteTelegramMessage(chatId, messageId) {
 async function answerCallbackQuery(callbackId, text) {
   if (!CONFIG.telegramToken || !callbackId) return;
   try {
-    await fetchWithTimeout(`${TELEGRAM_API}/answerCallbackQuery`, {
+    await fetchWithTimeout(`${getTelegramApi()}/answerCallbackQuery`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ callback_query_id: callbackId, text, show_alert: false }),
@@ -1074,7 +1074,7 @@ async function pollTelegram() {
       allowed_updates: JSON.stringify(['message', 'callback_query']),
     });
 
-    const resp = await fetchWithTimeout(`${TELEGRAM_API}/getUpdates?${params}`, { timeout: 35000 });
+    const resp = await fetchWithTimeout(`${getTelegramApi()}/getUpdates?${params}`, { timeout: 35000 });
     const data = await resp.json();
 
     if (!data.ok) {
