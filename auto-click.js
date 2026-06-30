@@ -94,20 +94,21 @@ const CONFIG = {
 
 // ─── Remote Config Loading ────────────────────────────────────────────────────
 async function loadRemoteConfig() {
-  if (!CONFIG.configGistId || !CONFIG.githubToken) return;
+  if (!CONFIG.configGistId) return;
 
   try {
+    const headers = { 'Accept': 'application/vnd.github.v3+json' };
+    // Auth only if token is available (not required for public gist)
+    if (CONFIG.githubToken) headers['Authorization'] = `token ${CONFIG.githubToken}`;
+
     const resp = await fetch(`https://api.github.com/gists/${CONFIG.configGistId}`, {
-      headers: {
-        'Authorization': `token ${CONFIG.githubToken}`,
-        'Accept': 'application/vnd.github.v3+json',
-      },
+      headers,
       signal: AbortSignal.timeout(10000),
     });
-    if (!resp.ok) return;
+    if (!resp.ok) { log('Remote config: HTTP', resp.status); return; }
     const data = await resp.json();
     const file = data.files && data.files['config.json'];
-    if (!file) return;
+    if (!file) { log('Remote config: config.json not found in Gist'); return; }
 
     const remote = JSON.parse(file.content);
     log('Remote config загружен из Gist');
