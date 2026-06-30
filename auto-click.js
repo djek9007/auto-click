@@ -487,7 +487,15 @@ async function handleUpdateCode(chatId, msgId) {
 
     log('Обновление завершено. Перезапуск через 2 секунды...');
     setTimeout(() => {
-      shutdown().catch(() => process.exit(0));
+      // Перезапускаем процесс вместо завершения
+      const { spawn } = require('child_process');
+      const child = spawn(process.execPath, [__filename], {
+        detached: true,
+        stdio: 'inherit',
+        env: process.env,
+      });
+      child.unref();
+      process.exit(0);
     }, 2000);
 
   } catch (err) {
