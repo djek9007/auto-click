@@ -235,6 +235,41 @@ async function handleStatus(chatId, messageId) {
   await sendMainMenu(chatId, null, messageId);
 }
 
+async function handleHelp(chatId, messageId) {
+  const helpText = [
+    '📖 <b>Справка по командам</b>',
+    '',
+    '<b>Основные:</b>',
+    '  /start — Показать главное меню',
+    '  /stop — Остановить учёт времени',
+    '  /status — Текущий статус',
+    '  /restart — Перезапустить бота',
+    '',
+    '<b>Информация:</b>',
+    '  /stats — Статистика с сайта',
+    '  /help — Эта справка',
+    '',
+    '<b>Системные:</b>',
+    '  /update — Обновить код из репозитория',
+    '',
+    '<b>Управление кнопками:</b>',
+    '  ▶️ Запустить учёт — Начать отсчёт времени',
+    '  ⏹ Остановить учёт — Остановить',
+    '  📊 Обновить статус — Обновить информацию',
+    '  🖥️ Активные процессы — Список запущенных экземпляров',
+  ].join('\n');
+
+  const kb = [[{ text: '⬅️ Меню', callback_data: 'menu' }]];
+  const editId = messageId || state.lastMenuMessageId;
+
+  if (editId) {
+    const success = await editTelegramMessage(chatId, editId, helpText, kb);
+    if (success) return;
+  }
+  const newId = await sendTelegramMessage(chatId, helpText, kb);
+  if (newId) { state.lastMenuMessageId = newId; saveSession(); }
+}
+
 async function handleKillPid(chatId, messageId, pid) {
   if (!pid || pid === process.pid) {
     await handleInstances(chatId, messageId);
@@ -611,6 +646,7 @@ async function setupBotCommands() {
       { command: 'stats',   description: 'Статистика с сайта' },
       { command: 'restart', description: 'Перезапустить' },
       { command: 'update',  description: 'Обновить код' },
+      { command: 'help',    description: 'Справка по командам' },
     ];
     await fetchWithTimeout(`${TELEGRAM_API}/setMyCommands`, {
       method: 'POST',
@@ -756,6 +792,7 @@ async function pollTelegram() {
           case 'instances': handleInstances(chatId, msgId).catch(err => log('Callback instances error:', err.message)); break;
           case 'kill_all_others': handleKillOthers(chatId, msgId).catch(err => log('Callback kill_all_others error:', err.message)); break;
           case 'update_code': handleUpdateCode(chatId, msgId).catch(err => log('Callback update_code error:', err.message)); break;
+          case 'help':        handleHelp(chatId, msgId).catch(err => log('Callback help error:', err.message)); break;
           default:
             if (cbData.startsWith('kill_')) {
               const pid = parseInt(cbData.slice(5));
@@ -793,6 +830,8 @@ async function pollTelegram() {
         handleUpdateCode(msg.chat.id).catch(err => log('Text update error:', err.message));
       } else if (text === '/menu' || text === 'menu' || text === '⚙️ меню') {
         handleShowMenu(msg.chat.id).catch(err => log('Text menu error:', err.message));
+      } else if (text === '/help' || text === 'help' || text === 'помощь' || text === 'справка') {
+        handleHelp(msg.chat.id).catch(err => log('Text help error:', err.message));
       } else {
         // Любое другое сообщение — просто показываем меню в чистоте (без дубликатов)
         handleShowMenu(msg.chat.id).catch(err => log('Text default error:', err.message));
@@ -889,7 +928,18 @@ async function takeScreenshot(page, label) {
 
 // ─── Puppeteer — Browser ───────────────────────────────────────────────────────
 async function launchBrowser() {
-  const puppeteer = require('puppeteer');
+  let puppeteer;
+  try {
+    puppeteer = require('puppeteer');
+  } catch (err) {
+    throw new Error(
+      'Модуль puppeteer не установлен!\n\n' +
+      'Выполните:\n' +
+      '  npm install\n\n' +
+      'Или:\n' +
+      '  npm install puppeteer'
+    );
+  }
 
   const browser = await puppeteer.launch({
     headless: CONFIG.headless ? 'new' : false,
