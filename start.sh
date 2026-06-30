@@ -6,7 +6,10 @@ ENV_FILE="$SCRIPT_DIR/.env"
 
 # Проверяем наличие .env файла
 if [ ! -f "$ENV_FILE" ]; then
-  echo "❌ Файл .env не найден!"
+  echo ""
+  echo "╔══════════════════════════════════════════╗"
+  echo "║  ❌ Файл .env не найден!                ║"
+  echo "╚══════════════════════════════════════════╝"
   echo ""
   echo "Создайте его из шаблона:"
   echo "  cp .env.example .env"
@@ -15,15 +18,30 @@ if [ ! -f "$ENV_FILE" ]; then
   echo "  EMAIL=ваш@email.com"
   echo "  PASSWORD=ваш_пароль"
   echo "  TELEGRAM_TOKEN=токен_бота"
+  echo ""
   exit 1
 fi
 
-# Загружаем переменные из .env
-if [ -f "$ENV_FILE" ]; then
-  set -a
-  source "$ENV_FILE"
-  set +a
+# Проверяем что переменные заданы
+set -a
+source "$ENV_FILE"
+set +a
+
+if [ -z "$EMAIL" ] || [ -z "$PASSWORD" ] || [ -z "$TELEGRAM_TOKEN" ]; then
+  echo ""
+  echo "╔══════════════════════════════════════════╗"
+  echo "║  ❌ Не все переменные заданы в .env!     ║"
+  echo "╚══════════════════════════════════════════╝"
+  echo ""
+  echo "Обязательные переменные:"
+  [ -z "$EMAIL" ] && echo "  ❌ EMAIL — не задан"
+  [ -z "$PASSWORD" ] && echo "  ❌ PASSWORD — не задан"
+  [ -z "$TELEGRAM_TOKEN" ] && echo "  ❌ TELEGRAM_TOKEN — не задан"
+  echo ""
+  exit 1
 fi
+
+echo "✅ Конфигурация загружена: $EMAIL"
 
 # Kill by PID file first (most reliable)
 if [ -f "$PID_FILE" ]; then
