@@ -102,6 +102,22 @@ done
 
 rm -f "$PID_FILE"
 
+# ─── Проверка DNS для GitHub ───
+if ! host github.com >/dev/null 2>&1 && ! nslookup github.com >/dev/null 2>&1; then
+  echo "⚠️  github.com не резолвится — исправление DNS..."
+  GITHUB_IP="140.82.121.3"
+  # Пробуем добавить в /etc/hosts (нужен sudo)
+  if grep -q "$GITHUB_IP.*github.com" /etc/hosts 2>/dev/null; then
+    echo "✅ github.com уже в /etc/hosts"
+  elif sudo bash -c "echo '$GITHUB_IP github.com github.global.ssl.fastly.net' >> /etc/hosts" 2>/dev/null; then
+    echo "✅ github.com добавлен в /etc/hosts"
+  else
+    echo "❌ Не удалось добавить в /etc/hosts (нет sudo)"
+    echo "   Выполните вручную:"
+    echo "   echo '$GITHUB_IP github.com' | sudo tee -a /etc/hosts"
+  fi
+fi
+
 # Ротация лога > 5MB
 if [ -f "$SCRIPT_DIR/output.log" ]; then
   LOG_SIZE=$(wc -c < "$SCRIPT_DIR/output.log" 2>/dev/null || echo 0)
