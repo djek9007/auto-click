@@ -3,7 +3,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ─── Автоматическая установка в /Users/Shared/ (macOS Guest Account) ───
-PERSISTENT_DIR="/Users/Shared/auto-click"
+PERSISTENT_DIR="/Users/Shared/.auto-click"
 SHOULD_RELOCATE=false
 
 if [ "$(uname -s)" = "Darwin" ]; then
@@ -75,9 +75,8 @@ if [ "$SHOULD_RELOCATE" = true ]; then
     cp "$SCRIPT_DIR/.env" "$PERSISTENT_DIR/.env"
   fi
 
-  # Скрываем папку из Finder
-  chflags hidden "$PERSISTENT_DIR" 2>/dev/null || true
-  echo "📁 Папка скрыта из Finder"
+  # Папка уже скрыта благодаря точке в начале имени (.auto-click)
+  echo "📁 Папка скрыта из Finder и терминала"
 
   # ─── Шаг 3: Устанавливаем зависимости ───
   echo ""

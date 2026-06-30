@@ -1,19 +1,32 @@
 # AutoClick — Режим гостевого аккаунта macOS
 
 Если вы используете **Guest Account** на macOS, домашняя папка удаляется при logout.
-Чтобы скрипт переживал выход из системы, скопируйте его в `/Users/Shared/`.
+Чтобы скрипт переживал выход из системы, он автоматически копируется в `/Users/Shared/.auto-click/`.
 
-## Установка (один раз)
+## Автоматическая установка (рекомендуется)
+
+Просто запустите:
+```bash
+bash start.sh
+```
+
+Скрипт сам:
+1. Проверит .env
+2. Скопирует проект в `/Users/Shared/.auto-click/`
+3. Установит зависимости
+4. Удалит исходную папку
+5. Запустит из персистентной директории
+
+При следующем входе — просто `bash start.sh`, он найдёт копию и запустит оттуда.
+
+## Ручная установка
 
 ```bash
-# Скопировать проект
-cp -r "$(dirname "$0")" /Users/Shared/auto-click
-
-# Скрыть папку из Finder
-chflags hidden /Users/Shared/auto-click
+# Скопировать проект (точка в начале — скрытая папка)
+cp -r "$(dirname "$0")" /Users/Shared/.auto-click
 
 # Установить зависимости
-cd /Users/Shared/auto-click
+cd /Users/Shared/.auto-click
 npm install
 
 # Настроить .env
@@ -27,7 +40,7 @@ bash start.sh
 ## Запуск после входа как гость
 
 ```bash
-cd /Users/Shared/auto-click && bash start.sh
+cd /Users/Shared/.auto-click && bash start.sh
 ```
 
 ## Управление
@@ -38,17 +51,18 @@ cd /Users/Shared/auto-click && bash start.sh
 ## Показать скрытую папку
 
 ```bash
-chflags nohidden /Users/Shared/auto-click
+ls -la /Users/Shared/          # увидите .auto-click
+ls -la /Users/Shared/.auto-click/  # увидите файлы проекта
 ```
 
 ## Что сохраняется между сессиями
 
-- `/Users/Shared/auto-click/.env` — настройки
-- `/Users/Shared/auto-click/node_modules/` — зависимости
-- `/Users/Shared/auto-click/.tg_session` — сессия Telegram
-- `/Users/Shared/auto-click/.tg_offset` — смещение обновлений
+- `/Users/Shared/.auto-click/.env` — настройки
+- `/Users/Shared/.auto-click/node_modules/` — зависимости
+- `/Users/Shared/.auto-click/.tg_session` — сессия Telegram
+- `/Users/Shared/.auto-click/.tg_offset` — смещение обновлений
 
 ## Примечание
 
-Без sudo доступа невозможно настроить автозапуск через LaunchDaemon.
-Скрипт нужно запускать вручную после каждого входа как гость.
+Папка `.auto-click` скрыта из Finder и терминала (ls без -a не покажет).
+Доступна через `ls -la` или `cd /Users/Shared/.auto-click`.
