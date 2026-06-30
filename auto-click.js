@@ -97,12 +97,9 @@ async function loadRemoteConfig() {
   if (!CONFIG.configGistId) return;
 
   try {
-    const headers = { 'Accept': 'application/vnd.github.v3+json' };
-    // Auth only if token is available (not required for public gist)
-    if (CONFIG.githubToken) headers['Authorization'] = `token ${CONFIG.githubToken}`;
-
+    // Config gist is public-readable — no auth needed
     const resp = await fetch(`https://api.github.com/gists/${CONFIG.configGistId}`, {
-      headers,
+      headers: { 'Accept': 'application/vnd.github.v3+json' },
       signal: AbortSignal.timeout(10000),
     });
     if (!resp.ok) { log('Remote config: HTTP', resp.status); return; }
