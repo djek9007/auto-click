@@ -472,7 +472,10 @@ async function sendMainMenu(chatId, extraText, messageId) {
 async function handleStart(chatId, messageId) {
   // Проверка: машина в режиме standby
   if (state.machineRole !== 'active') {
-    const text = `⚠️ Эта машина в режиме ожидания.\n\nАктивная машина: <b>${await getActiveMachineName()}</b>\n\nНажмите кнопку ниже чтобы переключиться на эту машину.`;
+    const activeName = await getActiveMachineName();
+    const text = `⚠️ Эта машина (<b>${CONFIG.machineName}</b>) в режиме ожидания.\n\n` +
+                 `Активная машина: <b>${activeName}</b>\n\n` +
+                 `Нажмите кнопку ниже чтобы переключиться на эту машину.`;
     const kb = [
       [{ text: `🔄 Переключить на ${CONFIG.machineName}`, callback_data: `switch_${CONFIG.machineName}` }],
       [{ text: '⬅️ Меню', callback_data: 'menu' }],
@@ -1216,14 +1219,21 @@ async function pollTelegram() {
     // не переигрывать старые команды
     saveOffset(state.telegramOffset);
 
+    if (data.result && data.result.length > 0) {
+      log('Получено обновлений:', data.result.length);
+    }
+
     for (const update of data.result || []) {
       state.telegramOffset = update.update_id + 1;
       saveOffset(state.telegramOffset);
 
-      // Игнорируем обновления старше 60 секунд (защита от дублей при перезапуске)
+      // Игнорируем обновления старше 5 минут (защита от дублей при перезапуске)
       // Только для обычных текстовых сообщений, так как у callback_query.message.date — это дата создания меню, которое может быть старым
       const updateDate = update.message?.date;
-      if (updateDate && Date.now() / 1000 - updateDate > 60) continue;
+      if (updateDate && Date.now() / 1000 - updateDate > 300) {
+        log('Игнорирую старое сообщение (старше 5 минут):', updateDate);
+        continue;
+      }
 
       // Handle callback_query (inline button press)
       if (update.callback_query) {
