@@ -2322,10 +2322,20 @@ async function stopAutoClick() {
 }
 
 async function sendStartupMenu() {
-  if (!state.telegramChatId || !CONFIG.telegramToken) return;
+  if (!state.telegramChatId || !CONFIG.telegramToken) {
+    log('sendStartupMenu: пропуск (нет chatId или token)');
+    return;
+  }
+  log('sendStartupMenu: отправка меню в чат', state.telegramChatId);
   const text = '🔄 <b>AutoClick перезапущен</b>\n\n' + getStatusText();
   const newId = await sendTelegramMessage(state.telegramChatId, text, getKeyboard());
-  if (newId) { state.lastMenuMessageId = newId; saveSession(); }
+  if (newId) {
+    state.lastMenuMessageId = newId;
+    saveSession();
+    log('sendStartupMenu: меню отправлено, messageId:', newId);
+  } else {
+    log('sendStartupMenu: не удалось отправить меню');
+  }
 }
 
 // ─── Graceful Shutdown ─────────────────────────────────────────────────────────
