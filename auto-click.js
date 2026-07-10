@@ -462,24 +462,28 @@ function isPageValid() {
   }
 }
 
-// Ищет уже открытые обычные браузеры пользователя на компе (не наш puppeteer-Chrome)
+// Ищет уже открытые обычные браузеры пользователя на компе (не наш puppeteer-Chrome).
+// Проверяем именно главный бинарник .app/Contents/MacOS/<Имя> — фоновые помощники
+// (Chrome Helper, апдейтеры, XPC-сервисы, дочерние --type= процессы) не считаем,
+// они крутятся в фоне даже когда окно браузера закрыто.
 function detectOtherBrowsers() {
   if (process.platform !== 'darwin') return [];
   try {
     const { execSync } = require('child_process');
     const out = execSync('ps -axo command=', { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
-    const patterns = [
-      ['Google Chrome', /Google Chrome(?! for Testing)/],
-      ['Safari', /\/Safari(\.app\/|$)/],
-      ['Firefox', /Firefox\.app/],
-      ['Microsoft Edge', /Microsoft Edge/],
-      ['Arc', /\/Arc\.app\//],
-      ['Opera', /Opera\.app/],
+    const apps = [
+      ['Google Chrome', 'Google Chrome'],
+      ['Safari', 'Safari'],
+      ['Firefox', 'firefox'],
+      ['Microsoft Edge', 'Microsoft Edge'],
+      ['Arc', 'Arc'],
+      ['Opera', 'Opera'],
     ];
     const found = new Set();
     for (const line of out.split('\n')) {
-      for (const [name, re] of patterns) {
-        if (re.test(line)) found.add(name);
+      if (line.includes('Helper') || line.includes('--type=')) continue;
+      for (const [name, bin] of apps) {
+        if (line.includes(`/${name}.app/Contents/MacOS/${bin}`)) found.add(name);
       }
     }
     return [...found];
