@@ -412,6 +412,19 @@ function startGistWatcher() {
           `⏸ Эта машина (${CONFIG.machineName}) переведена в режим ожидания.\n` +
           `Активная машина: <b>${lock.active}</b>`
         ).catch(() => {});
+      } else if (!lock.active && state.machineRole !== 'active') {
+        // Никто не активен (например, после ⏹ Остановить учёт) — иначе Telegram
+        // слушать некому. Берём на себя, с небольшой задержкой против гонки,
+        // если сразу несколько машин заметят это одновременно.
+        await sleep(getRandomInt(500, 3000));
+        const recheck = await readGist();
+        if (recheck && !recheck.active) {
+          log('Нет активной машины — беру Telegram на себя');
+          state.machineRole = 'active';
+          await claimActive();
+          startTelegramPolling();
+          await sendStartupMenu();
+        }
       }
     } catch (err) {
       log('Gist check error:', err.message);
