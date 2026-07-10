@@ -449,6 +449,33 @@ function isPageValid() {
   }
 }
 
+// Ищет уже открытые обычные браузеры пользователя на компе (не наш puppeteer-Chrome)
+function detectOtherBrowsers() {
+  if (process.platform !== 'darwin') return [];
+  try {
+    const { execSync } = require('child_process');
+    const out = execSync('ps -axo command=', { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+    const patterns = [
+      ['Google Chrome', /Google Chrome(?! for Testing)/],
+      ['Safari', /\/Safari(\.app\/|$)/],
+      ['Firefox', /Firefox\.app/],
+      ['Microsoft Edge', /Microsoft Edge/],
+      ['Arc', /\/Arc\.app\//],
+      ['Opera', /Opera\.app/],
+    ];
+    const found = new Set();
+    for (const line of out.split('\n')) {
+      for (const [name, re] of patterns) {
+        if (re.test(line)) found.add(name);
+      }
+    }
+    return [...found];
+  } catch (err) {
+    log('detectOtherBrowsers error:', err.message);
+    return [];
+  }
+}
+
 function getBrowserStatus() {
   if (state.browser && isPageValid()) return '✅ Браузер работает';
   if (state.browser && !isPageValid()) return '⚠️ Браузер открыт, страница не загружена';
@@ -533,6 +560,30 @@ async function handleStart(chatId, messageId) {
     await sendMainMenu(chatId, '⏳ Запуск уже выполняется...', messageId);
     return;
   }
+
+  const otherBrowsers = detectOtherBrowsers();
+  if (otherBrowsers.length > 0) {
+    const text = `⚠️ На этом компьютере уже открыт браузер: <b>${otherBrowsers.join(', ')}</b>.\n\n` +
+      `Если сейчас работаете за ним — запустите учёт на другой машине (❌ Отмена).\n` +
+      `Если это не помешает — подтвердите запуск.`;
+    const kb = [
+      [{ text: '✅ Всё равно запустить', callback_data: 'confirm_start' }],
+      [{ text: '❌ Отмена', callback_data: 'menu' }],
+    ];
+    const editId = messageId || state.lastMenuMessageId;
+    if (editId) {
+      const success = await editTelegramMessage(chatId, editId, text, kb);
+      if (success) return;
+    }
+    const newId = await sendTelegramMessage(chatId, text, kb);
+    if (newId) { state.lastMenuMessageId = newId; saveSession(); }
+    return;
+  }
+
+  await doStartAutoClick(chatId, messageId);
+}
+
+async function doStartAutoClick(chatId, messageId) {
   await sendMainMenu(chatId, '🔄 Запускаю браузер...', messageId);
   const startTargetId = messageId || state.lastMenuMessageId;
   startAutoClick().then(() => {
@@ -1308,6 +1359,7 @@ async function pollTelegram() {
 
         switch (cbData) {
           case 'start':     handleStart(chatId, msgId).catch(err => log('Callback start error:', err.message)); break;
+          case 'confirm_start': doStartAutoClick(chatId, msgId).catch(err => log('Callback confirm_start error:', err.message)); break;
           case 'stop':      handleStop(chatId, msgId).catch(err => log('Callback stop error:', err.message)); break;
           case 'status':    handleStatus(chatId, msgId).catch(err => log('Callback status error:', err.message)); break;
           case 'stats':     handleStats(chatId, msgId).catch(err => log('Callback stats error:', err.message)); break;
