@@ -399,6 +399,17 @@ function startGistWatcher() {
         if (process.env.AUTO_START === 'true') {
           await startAutoClick();
         }
+      } else if (lock.active && lock.active !== CONFIG.machineName && state.machineRole === 'active') {
+        // Активность передали другой машине, но именно эта не поймала команду
+        // переключения (например, кнопку в Telegram обработала машина-получатель) —
+        // самостоятельно уходим в standby, чтобы не считать дважды.
+        log(`Активность передана машине ${lock.active}, ухожу в standby`);
+        await stopAutoClick();
+        state.machineRole = 'standby';
+        await sendTelegramMessage(state.telegramChatId,
+          `⏸ Эта машина (${CONFIG.machineName}) переведена в режим ожидания.\n` +
+          `Активная машина: <b>${lock.active}</b>`
+        ).catch(() => {});
       }
     } catch (err) {
       log('Gist check error:', err.message);
