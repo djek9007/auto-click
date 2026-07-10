@@ -210,6 +210,7 @@ const state = {
   nextClickTime:      null,
   machineRole:        'standby',
   gistCheckTimer:     null,
+  caffeinateProc:     null,
   updateAppliedAt:    _savedSession.updateAppliedAt || null,
 };
 
@@ -2290,6 +2291,7 @@ async function startAutoClick() {
   state.startingUp = true;
   state.isRunning = true;
   state.startTime = Date.now();
+  startCaffeinate();
 
   log('═══════════════════════════════════════');
   log('AutoClick ЗАПУЩЕН');
@@ -2350,7 +2352,28 @@ async function stopAutoClick() {
     state.browser = null;
     state.page = null;
   }
+  stopCaffeinate();
   log('AutoClick остановлен');
+}
+
+// ─── macOS: не даём системе уснуть, пока идёт учёт времени ───────────────────
+function startCaffeinate() {
+  if (process.platform !== 'darwin' || state.caffeinateProc) return;
+  try {
+    const { spawn } = require('child_process');
+    state.caffeinateProc = spawn('caffeinate', ['-di', '-w', String(process.pid)], { stdio: 'ignore' });
+    state.caffeinateProc.on('exit', () => { state.caffeinateProc = null; });
+    log('☕ caffeinate запущен (система не будет спать во время учёта)');
+  } catch (err) {
+    log('caffeinate error:', err.message);
+  }
+}
+
+function stopCaffeinate() {
+  if (!state.caffeinateProc) return;
+  try { state.caffeinateProc.kill(); } catch {}
+  state.caffeinateProc = null;
+  log('☕ caffeinate остановлен (система снова может уснуть)');
 }
 
 async function sendStartupMenu() {
