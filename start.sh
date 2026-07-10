@@ -202,16 +202,14 @@ else
   echo "✅ Chrome найден: $CHROME_BIN"
 fi
 
-# ─── Автозапуск — ВСЕГДА пересоздаём LaunchAgent ───
+# ─── Автозапуск — пересоздаём LaunchAgent только если он изменился ───
+# ВАЖНО: launchctl load с RunAtLoad=true сразу порождает параллельный запуск
+# start.sh. Если делать unload/load на каждом запуске (в т.ч. из-под самого
+# LaunchAgent), этот параллельный экземпляр убивает только что стартовавший
+# node (секция kill выше) и сам гибнет на unload — бот не успевает пожить.
+# Поэтому трогаем launchd только когда plist реально отсутствует/устарел.
 if [ "$(uname -s)" = "Darwin" ]; then
-  echo "⚙️ Настройка автозапуска..."
-  mkdir -p "$HOME/Library/LaunchAgents"
-
-  # Удаляем старый LaunchAgent если есть
-  launchctl unload "$PLIST_PATH" 2>/dev/null || true
-  rm -f "$PLIST_PATH"
-
-  cat > "$PLIST_PATH" << EOF
+  NEW_PLIST=$(cat << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -237,8 +235,16 @@ if [ "$(uname -s)" = "Darwin" ]; then
 </dict>
 </plist>
 EOF
-  launchctl load "$PLIST_PATH" 2>/dev/null || true
-  echo "✅ Автозапуск: $PLIST_PATH → $PERSISTENT_DIR/start.sh"
+)
+
+  if [ "$(cat "$PLIST_PATH" 2>/dev/null || true)" != "$NEW_PLIST" ]; then
+    echo "⚙️ Настройка автозапуска..."
+    mkdir -p "$HOME/Library/LaunchAgents"
+    launchctl unload "$PLIST_PATH" 2>/dev/null || true
+    echo "$NEW_PLIST" > "$PLIST_PATH"
+    launchctl load "$PLIST_PATH" 2>/dev/null || true
+    echo "✅ Автозапуск: $PLIST_PATH → $PERSISTENT_DIR/start.sh"
+  fi
 fi
 
 echo "🚀 Запуск AutoClick..."
