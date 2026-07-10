@@ -371,6 +371,14 @@ async function getActiveMachineName() {
   return 'неизвестно';
 }
 
+// Назначенная активной машина не шлёт heartbeat дольше 90 сек — считаем её
+// не подтвердившей активность (офлайн/не запущена).
+function isAssignedActiveStale(lock) {
+  const m = lock.machines && lock.machines[lock.active];
+  if (!m || !m.lastSeen) return true;
+  return Date.now() - new Date(m.lastSeen).getTime() > 90000;
+}
+
 function startGistWatcher() {
   if (state.gistCheckTimer) clearInterval(state.gistCheckTimer);
   state.gistCheckTimer = setInterval(async () => {
@@ -421,6 +429,18 @@ function startGistWatcher() {
         const recheck = await readGist();
         if (recheck && !recheck.active) {
           log('Нет активной машины — беру Telegram на себя');
+          state.machineRole = 'active';
+          await claimActive();
+          startTelegramPolling();
+          await sendStartupMenu();
+        }
+      } else if (lock.active && lock.active !== CONFIG.machineName && state.machineRole !== 'active' && isAssignedActiveStale(lock)) {
+        // Активность назначена другой машине, но та её не подтвердила (офлайн/не
+        // запущена) дольше 90 сек — не ждём вечно, забираем себе.
+        log(`Машина ${lock.active} не подтвердила активность (офлайн?), забираю себе`);
+        await sleep(getRandomInt(500, 3000));
+        const recheck = await readGist();
+        if (recheck && recheck.active === lock.active && isAssignedActiveStale(recheck)) {
           state.machineRole = 'active';
           await claimActive();
           startTelegramPolling();
