@@ -405,8 +405,10 @@ function startGistWatcher() {
         // самостоятельно уходим в standby, чтобы не считать дважды.
         log(`Активность передана машине ${lock.active}, ухожу в standby`);
         await stopAutoClick();
+        const demotedChatId = state.telegramChatId;
+        stopTelegramPolling();
         state.machineRole = 'standby';
-        await sendTelegramMessage(state.telegramChatId,
+        await sendTelegramMessage(demotedChatId,
           `⏸ Эта машина (${CONFIG.machineName}) переведена в режим ожидания.\n` +
           `Активная машина: <b>${lock.active}</b>`
         ).catch(() => {});
@@ -2539,11 +2541,8 @@ async function main() {
       const lock2 = await readGist();
       if (lock2 && lock2.active && lock2.active !== CONFIG.machineName) {
         state.machineRole = 'standby';
-        log(`Другая машина стала активной: ${lock2.active}`);
+        log(`Другая машина стала активной: ${lock2.active}. Ожидаю в standby (Telegram слушает только активная машина).`);
         startGistWatcher();
-        // Запускаем Telegram polling даже в standby
-        startTelegramPolling();
-        await sendStartupMenu();
         await new Promise(() => {});
         return;
       }
@@ -2554,11 +2553,8 @@ async function main() {
     } else {
       // Another machine is active — standby
       state.machineRole = 'standby';
-      log(`Ожидание. Активная машина: ${lock.active}`);
+      log(`Ожидание. Активная машина: ${lock.active}. Telegram слушает только активная машина.`);
       startGistWatcher();
-      // Запускаем Telegram polling даже в standby — чтобы можно было переключать машины
-      startTelegramPolling();
-      await sendStartupMenu();
       await new Promise(() => {});
       return;
     }
