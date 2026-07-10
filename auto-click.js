@@ -866,9 +866,18 @@ async function handleUpdateCode(chatId, msgId, broadcast = true) {
     state.updateAppliedAt = requestedAt;
     saveSession();
     try {
-      const lock = await readGist() || { active: null, telegramOffset: 0, machines: {} };
-      lock.updateRequested = requestedAt;
-      await writeGist(lock);
+      // Gist PATCH заменяет файл целиком — если параллельно (heartbeat с другой
+      // машины) прилетит запись без нашего флага, она его затрёт. Поэтому
+      // перепроверяем и переотправляем, пока флаг реально не закрепится.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const lock = await readGist() || { active: null, telegramOffset: 0, machines: {} };
+        lock.updateRequested = requestedAt;
+        await writeGist(lock);
+        await sleep(2000);
+        const check = await readGist();
+        if (check && check.updateRequested === requestedAt) break;
+        log(`Флаг обновления затёрся, повтор рассылки (попытка ${attempt + 1})`);
+      }
     } catch (err) {
       log('Не удалось разослать запрос обновления:', err.message);
     }
