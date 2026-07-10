@@ -94,8 +94,9 @@ function loadSession() {
 function saveSession() {
   try {
     fs.writeFileSync(SESSION_FILE, JSON.stringify({
-      chatId:        state.telegramChatId,
-      menuMessageId: state.lastMenuMessageId,
+      chatId:         state.telegramChatId,
+      menuMessageId:  state.lastMenuMessageId,
+      updateAppliedAt: state.updateAppliedAt,
     }));
   } catch {}
 }
@@ -209,6 +210,7 @@ const state = {
   nextClickTime:      null,
   machineRole:        'standby',
   gistCheckTimer:     null,
+  updateAppliedAt:    _savedSession.updateAppliedAt || null,
 };
 
 // ─── Utilities ─────────────────────────────────────────────────────────────────
@@ -365,13 +367,22 @@ function startGistWatcher() {
       await heartbeat();
       const lock = await readGist();
       if (!lock) return;
+
+      // Обновление кода, разосланное с другой машины — подхватываем на этой.
+      if (lock.updateRequested && lock.updateRequested !== state.updateAppliedAt) {
+        state.updateAppliedAt = lock.updateRequested;
+        saveSession();
+        log('Обнаружен запрос на обновление кода из Gist, применяю...');
+        handleUpdateCode(state.telegramChatId, null, false)
+          .catch(err => log('Auto-update error:', err.message));
+        return;
+      }
+
       if (lock.active === CONFIG.machineName && state.machineRole !== 'active') {
         log('Эта машина назначена активной! Переключение...');
         state.machineRole = 'active';
         state.telegramOffset = lock.telegramOffset || 0;
         saveOffset(state.telegramOffset);
-        clearInterval(state.gistCheckTimer);
-        state.gistCheckTimer = null;
         startTelegramPolling();
         await sendStartupMenu();
         if (process.env.AUTO_START === 'true') {
@@ -818,13 +829,28 @@ async function handleRestart(chatId, messageId) {
   }).finally(() => { state.startingUp = false; });
 }
 
-async function handleUpdateCode(chatId, msgId) {
+async function handleUpdateCode(chatId, msgId, broadcast = true) {
   let statusMsgId = null;
   const steps = [
     'Получение свежего кода из репозитория (git pull)',
     'Установка npm-пакетов (npm install)',
     'Скачивание Chrome для Puppeteer'
   ];
+
+  // Оповещаем остальные машины через Gist, чтобы они тоже обновились —
+  // сами себя не трогаем повторно (updateAppliedAt), не идём по кругу.
+  if (broadcast && CONFIG.gistId) {
+    const requestedAt = Date.now();
+    state.updateAppliedAt = requestedAt;
+    saveSession();
+    try {
+      const lock = await readGist() || { active: null, telegramOffset: 0, machines: {} };
+      lock.updateRequested = requestedAt;
+      await writeGist(lock);
+    } catch (err) {
+      log('Не удалось разослать запрос обновления:', err.message);
+    }
+  }
 
   const renderText = (currentStepIndex, statusText) => {
     let t = '<b>🔄 Обновление AutoClick</b>\n\n';
@@ -2457,6 +2483,7 @@ async function main() {
       state.machineRole = 'active';
       state.telegramOffset = lock.telegramOffset || 0;
       saveOffset(state.telegramOffset);
+      startGistWatcher();
       log('Эта машина — активная');
     } else if (!lock || !lock.active) {
       // No machine active — become active automatically
@@ -2476,6 +2503,7 @@ async function main() {
       }
       state.machineRole = 'active';
       await claimActive();
+      startGistWatcher();
       log('Нет активной машины — эта машина стала активной');
     } else {
       // Another machine is active — standby
