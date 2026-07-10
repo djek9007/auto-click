@@ -507,8 +507,11 @@ async function handleStart(chatId, messageId) {
 }
 
 async function handleShowMenu(chatId, messageId) {
+  const hint = state.machineRole === 'active'
+    ? 'Нажмите <b>▶️ Запустить учёт</b> чтобы начать учёт времени.'
+    : 'Эта машина в режиме ожидания — учёт идёт на другой. Нажмите <b>🖥️ Активные процессы</b>, чтобы переключиться сюда.';
   const welcome = !state.isRunning
-    ? '🤖 <b>AutoClick</b>\n\nСкрипт запущен и ждёт команды.\nНажмите <b>▶️ Запустить учёт</b> чтобы начать учёт времени.\n\n' + BOT_COMMANDS
+    ? getStatusText() + '\n\n' + hint + '\n\n' + BOT_COMMANDS
     : null;
   if (welcome) {
     if (messageId) {
@@ -1325,7 +1328,7 @@ async function startTelegramPolling() {
     return;
   }
 
-  log('⏸ Режим ожидания. Напишите боту /start чтобы запустить');
+  log('⏸ Режим ожидания. Напишите боту /menu и нажмите ▶️ Запустить учёт');
   log('Telegram polling запущен. Бот: @OlzhtomBot');
 
   // Если уже знаем chatId — редактируем последнее меню или шлём новое
