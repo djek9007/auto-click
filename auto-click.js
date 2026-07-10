@@ -902,49 +902,42 @@ async function handleUpdateCode(chatId, msgId, broadcast = true) {
 
     // Шаг 1: git pull
     const hasGit = fs.existsSync(path.join(__dirname, '.git'));
+    let hasCommits = false;
     if (hasGit) {
-      // Проверяем есть ли коммиты в репозитории
-      let hasCommits = false;
       try {
         await execCmd('git log -1');
         hasCommits = true;
       } catch {}
+    }
 
-      if (!hasCommits) {
-        // .git есть но нет коммитов — инициализируем заново
-        log('Git repo пустой,重新 инициализация...');
-        try {
-          await execCmd('git remote remove origin 2>/dev/null || true');
-          await execCmd('git remote add origin https://github.com/djek9007/auto-click.git');
-          await execCmd('git fetch origin main');
-          await execCmd('git reset --hard origin/main');
-          log('Git repo восстановлен из remote');
-        } catch (initErr) {
-          throw new Error(
-            'GitHub недоступен. Обновите вручную:\n' +
-            '1. Скачайте auto-click.js с GitHub\n' +
-            '2. Замените в ' + __dirname + '\n' +
-            '3. bash start.sh'
-          );
-        }
-      } else {
-        // Есть коммиты — простой git pull
-        try {
-          await execCmd('git pull');
-        } catch (pullErr) {
-          throw new Error(
-            'git pull не удался: ' + pullErr.message + '\n\n' +
-            'Обновите вручную или проверьте сеть.'
-          );
-        }
+    if (hasGit && hasCommits) {
+      // Есть коммиты — простой git pull
+      try {
+        await execCmd('git pull');
+      } catch (pullErr) {
+        throw new Error(
+          'git pull не удался: ' + pullErr.message + '\n\n' +
+          'Обновите вручную или проверьте сеть.'
+        );
       }
     } else {
-      throw new Error(
-        'Git не найден. Обновите вручную:\n' +
-        '1. Скачайте auto-click.js с GitHub\n' +
-        '2. Замените в ' + __dirname + '\n' +
-        '3. bash start.sh'
-      );
+      // Нет .git (установлено из zip) или пустой репозиторий — разворачиваем из remote
+      log(hasGit ? 'Git repo пустой, инициализация...' : '.git не найден, инициализация...');
+      try {
+        if (!hasGit) await execCmd('git init');
+        await execCmd('git remote remove origin 2>/dev/null || true');
+        await execCmd('git remote add origin https://github.com/djek9007/auto-click.git');
+        await execCmd('git fetch origin main');
+        await execCmd('git reset --hard origin/main');
+        log('Git repo восстановлен из remote');
+      } catch (initErr) {
+        throw new Error(
+          'GitHub недоступен. Обновите вручную:\n' +
+          '1. Скачайте auto-click.js с GitHub\n' +
+          '2. Замените в ' + __dirname + '\n' +
+          '3. bash start.sh'
+        );
+      }
     }
 
     // Шаг 2
