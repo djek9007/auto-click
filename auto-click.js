@@ -767,7 +767,8 @@ async function handleInstances(chatId, messageId) {
       text += 'Нет зарегистрированных машин.';
     }
 
-    text += `\n\nТекущая активная: <b>${lock.active || 'нет'}</b>`;
+    text += `\n\n📋 Всего машин: <b>${names.length}</b>`;
+    text += `\nТекущая активная: <b>${lock.active || 'нет'}</b>`;
 
     const keyboard = [];
     for (const name of names) {
