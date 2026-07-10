@@ -212,6 +212,7 @@ const state = {
   gistCheckTimer:     null,
   caffeinateProc:     null,
   updateAppliedAt:    _savedSession.updateAppliedAt || null,
+  telegramPollingActive: false,
 };
 
 // ─── Utilities ─────────────────────────────────────────────────────────────────
@@ -1469,6 +1470,8 @@ async function startTelegramPolling() {
     }
   }
 
+  state.telegramPollingActive = true;
+
   const poll = async () => {
     let delay = 100;
     try {
@@ -1477,7 +1480,10 @@ async function startTelegramPolling() {
       log('Ошибка опроса Telegram, повтор через 3 сек:', err.message);
       delay = 3000;
     }
-    if (!state.shutdownRequested) {
+    // pollTelegram() может провисеть в long-poll'е до 25-35 сек — за это время
+    // stopTelegramPolling() уже мог быть вызван (например, при переключении
+    // машины). Без этой проверки цикл сам себя перезапускал бы навсегда.
+    if (!state.shutdownRequested && state.telegramPollingActive) {
       telegramPollTimer = setTimeout(poll, delay);
     }
   };
@@ -1485,6 +1491,7 @@ async function startTelegramPolling() {
 }
 
 function stopTelegramPolling() {
+  state.telegramPollingActive = false;
   if (telegramPollTimer) {
     clearTimeout(telegramPollTimer);
     telegramPollTimer = null;
@@ -2383,7 +2390,6 @@ async function startAutoClick() {
   state.startingUp = true;
   state.isRunning = true;
   state.startTime = Date.now();
-  startCaffeinate();
 
   log('═══════════════════════════════════════');
   log('AutoClick ЗАПУЩЕН');
@@ -2444,11 +2450,10 @@ async function stopAutoClick() {
     state.browser = null;
     state.page = null;
   }
-  stopCaffeinate();
   log('AutoClick остановлен');
 }
 
-// ─── macOS: не даём системе уснуть, пока идёт учёт времени ───────────────────
+// ─── macOS: не даём системе уснуть, пока жив процесс бота ─────────────────────
 function startCaffeinate() {
   if (process.platform !== 'darwin' || state.caffeinateProc) return;
   try {
@@ -2492,6 +2497,7 @@ async function shutdown() {
 
   log('Завершение работы...');
   stopTelegramPolling();
+  stopCaffeinate();
 
   if (state.gistCheckTimer) clearInterval(state.gistCheckTimer);
 
@@ -2548,6 +2554,10 @@ async function main() {
   log('Директория:', __dirname);
   log('PID:', process.pid);
   log('═══════════════════════════════════════════════════════════════');
+
+  // Держим систему без сна, пока жив бот — heartbeat и координация между
+  // машинами должны работать даже когда эта машина в standby (не кликает).
+  startCaffeinate();
 
   // Load remote config from Gist if CONFIG_GIST_ID is set
   log('Загрузка remote config...');
