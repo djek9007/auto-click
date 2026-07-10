@@ -258,10 +258,20 @@ async function gistFetch(url, options = {}) {
 async function readGist() {
   if (!CONFIG.gistId) return null;
   const resp = await gistFetch(`https://api.github.com/gists/${CONFIG.gistId}`);
-  if (!resp) return null;
+  if (!resp) {
+    log('Gist read error: нет ответа (сеть или таймаут)');
+    return null;
+  }
   try {
     const data = await resp.json();
-    if (!data.files || !data.files['machine-lock.json']) return null;
+    if (!resp.ok) {
+      log(`Gist read error: HTTP ${resp.status} ${data.message || resp.statusText} — проверьте GITHUB_TOKEN`);
+      return null;
+    }
+    if (!data.files || !data.files['machine-lock.json']) {
+      log('Gist read error: machine-lock.json не найден в gist', CONFIG.gistId);
+      return null;
+    }
     return JSON.parse(data.files['machine-lock.json'].content);
   } catch (err) {
     log('Gist parse error:', err.message);
@@ -662,7 +672,7 @@ async function handleInstances(chatId, messageId) {
   if (CONFIG.gistId) {
     const lock = await readGist();
     if (!lock) {
-      const text = '❌ Не удалось прочитать реестр машин';
+      const text = '❌ Не удалось прочитать реестр машин\n\nПроверьте GITHUB_TOKEN в .env этой машины (см. output.log — там точная причина: неверный токен или сеть).';
       const kb = [[{ text: '⬅️ Меню', callback_data: 'menu' }]];
       if (editId) await editTelegramMessage(chatId, editId, text, kb);
       else { const n = await sendTelegramMessage(chatId, text, kb); if (n) { state.lastMenuMessageId = n; saveSession(); } }
