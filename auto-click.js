@@ -506,7 +506,7 @@ function detectOtherBrowsers() {
     ];
     const found = new Set();
     for (const line of out.split('\n')) {
-      if (line.includes('Helper') || line.includes('--type=')) continue;
+      if (line.includes('Helper') || line.includes('--type=') || line.includes('--headless')) continue;
       for (const [name, bin] of apps) {
         if (line.includes(`/${name}.app/Contents/MacOS/${bin}`)) found.add(name);
       }
