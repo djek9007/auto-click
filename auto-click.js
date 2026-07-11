@@ -213,6 +213,7 @@ const state = {
   caffeinateProc:     null,
   updateAppliedAt:    _savedSession.updateAppliedAt || null,
   telegramPollingActive: false,
+  lastStartupMenuTime: 0,
 };
 
 // ─── Utilities ─────────────────────────────────────────────────────────────────
@@ -393,7 +394,13 @@ function startGistWatcher() {
       if (!lock) return;
 
       // Обновление кода, разосланное с другой машины — подхватываем на этой.
+      // Cooldown: если обновлялись менее 5 минут назад — пропускаем.
+      const UPDATE_COOLDOWN_MS = 5 * 60 * 1000;
       if (lock.updateRequested && lock.updateRequested !== state.updateAppliedAt) {
+        if (state.updateAppliedAt && (Date.now() - state.updateAppliedAt) < UPDATE_COOLDOWN_MS) {
+          log('Обновление уже применено недавно, пропускаю (cooldown)');
+          return;
+        }
         state.updateAppliedAt = lock.updateRequested;
         saveSession();
         log('Обнаружен запрос на обновление кода из Gist, применяю...');
@@ -462,21 +469,39 @@ function startGistWatcher() {
 const BOT_COMMANDS = '/start — Показать меню\n/stop — Остановить\n/status — Статус\n/stats — Статистика\n/machines — Машины\n/restart — Перезапустить\n/update — Обновить код\n/help — Справка';
 
 function getKeyboard() {
-  if (state.isRunning) {
-    return [
-      [{ text: '⏹ Остановить учёт',    callback_data: 'stop' }],
-      [{ text: '📊 Обновить статус',    callback_data: 'status' }, { text: '📈 Статистика с сайта', callback_data: 'stats' }],
-      [{ text: '🔄 Перезапустить',     callback_data: 'restart' }, { text: '🖥️ Активные процессы', callback_data: 'instances' }],
-      [{ text: '🔽 Обновить код',      callback_data: 'update_code' }, { text: '❓ Помощь', callback_data: 'help' }],
-    ];
+  const kb = [];
+
+  if (state.machineRole === 'active') {
+    if (state.isRunning) {
+      kb.push([{ text: '⏹ Остановить учёт', callback_data: 'stop' }]);
+      kb.push([
+        { text: '📊 Статус', callback_data: 'status' },
+        { text: '📈 Статистика', callback_data: 'stats' },
+      ]);
+      kb.push([
+        { text: '🔄 Перезапустить', callback_data: 'restart' },
+        { text: '🖥️ Машины', callback_data: 'instances' },
+      ]);
+    } else {
+      kb.push([{ text: '▶️ Запустить учёт', callback_data: 'start' }]);
+      kb.push([{ text: '📊 Статус', callback_data: 'status' }]);
+      kb.push([
+        { text: '🖥️ Машины', callback_data: 'instances' },
+        { text: '🔽 Обновить код', callback_data: 'update_code' },
+      ]);
+    }
   } else {
-    return [
-      [{ text: '▶️ Запустить учёт',    callback_data: 'start' }],
-      [{ text: '📊 Обновить статус',    callback_data: 'status' }],
-      [{ text: '🖥️ Активные процессы', callback_data: 'instances' }, { text: '🔽 Обновить код', callback_data: 'update_code' }],
-      [{ text: '❓ Помощь',            callback_data: 'help' }],
-    ];
+    // standby — показать кнопку переключения
+    kb.push([{ text: `🔄 Переключиться на ${CONFIG.machineName}`, callback_data: `switch_${CONFIG.machineName}` }]);
+    kb.push([{ text: '📊 Статус', callback_data: 'status' }]);
+    kb.push([
+      { text: '🖥️ Машины', callback_data: 'instances' },
+      { text: '🔽 Обновить код', callback_data: 'update_code' },
+    ]);
   }
+
+  kb.push([{ text: '❓ Помощь', callback_data: 'help' }]);
+  return kb;
 }
 
 function isPageValid() {
@@ -577,11 +602,12 @@ async function handleStart(chatId, messageId) {
   // Проверка: машина в режиме standby
   if (state.machineRole !== 'active') {
     const activeName = await getActiveMachineName();
-    const text = `⚠️ Эта машина (<b>${CONFIG.machineName}</b>) в режиме ожидания.\n\n` +
-                 `Активная машина: <b>${activeName}</b>\n\n` +
-                 `Нажмите кнопку ниже чтобы переключиться на эту машину.`;
+    const text = `⏸️ <b>Эта машина (${CONFIG.machineName}) в режиме ожидания</b>\n\n` +
+                 `Активная: <b>${activeName || 'нет'}</b>\n\n` +
+                 `Чтобы запустить учёт здесь — нажмите кнопку ниже.`;
     const kb = [
-      [{ text: `🔄 Переключить на ${CONFIG.machineName}`, callback_data: `switch_${CONFIG.machineName}` }],
+      [{ text: `🔄 Переключиться на ${CONFIG.machineName}`, callback_data: `switch_${CONFIG.machineName}` }],
+      [{ text: '🖥️ Другие машины', callback_data: 'instances' }],
       [{ text: '⬅️ Меню', callback_data: 'menu' }],
     ];
     const editId = messageId || state.lastMenuMessageId;
@@ -818,6 +844,10 @@ async function handleInstances(chatId, messageId) {
         keyboard.push([{ text: `🔄 Включить ${name}`, callback_data: `switch_${name}` }]);
       }
     }
+    // Если текущая машина standby — добавить кнопку "Запустить здесь"
+    if (lock.active && lock.active !== CONFIG.machineName && state.machineRole !== 'active') {
+      keyboard.push([{ text: '▶️ Запустить здесь', callback_data: 'start' }]);
+    }
     keyboard.push([
       { text: '🔄 Обновить', callback_data: 'instances' },
       { text: '⬅️ Меню', callback_data: 'menu' },
@@ -962,18 +992,9 @@ async function handleUpdateCode(chatId, msgId, broadcast = true) {
     state.updateAppliedAt = requestedAt;
     saveSession();
     try {
-      // Gist PATCH заменяет файл целиком — если параллельно (heartbeat с другой
-      // машины) прилетит запись без нашего флага, она его затрёт. Поэтому
-      // перепроверяем и переотправляем, пока флаг реально не закрепится.
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const lock = await readGist() || { active: null, telegramOffset: 0, machines: {} };
-        lock.updateRequested = requestedAt;
-        await writeGist(lock);
-        await sleep(2000);
-        const check = await readGist();
-        if (check && check.updateRequested === requestedAt) break;
-        log(`Флаг обновления затёрся, повтор рассылки (попытка ${attempt + 1})`);
-      }
+      const lock = await readGist() || { active: null, telegramOffset: 0, machines: {} };
+      lock.updateRequested = requestedAt;
+      await writeGist(lock);
     } catch (err) {
       log('Не удалось разослать запрос обновления:', err.message);
     }
@@ -1478,21 +1499,7 @@ async function startTelegramPolling() {
   log('⏸ Режим ожидания. Напишите боту /menu и нажмите ▶️ Запустить учёт');
   log('Telegram polling запущен. Бот: @OlzhtomBot');
 
-  // Если уже знаем chatId — редактируем последнее меню или шлём новое
-  if (state.telegramChatId) {
-    const msg =
-      '🤖 <b>AutoClick</b> запущен и ждёт команды.\n\n' +
-      'Нажмите <b>▶️ Запустить учёт</b> чтобы начать учёт времени.\n' +
-      'Настройки: ' + CONFIG.maxHours + ' часов, интервал ' + CONFIG.minIntervalMin + '-' + CONFIG.maxIntervalMin + ' мин.';
-    let success = false;
-    if (state.lastMenuMessageId) {
-      success = await editTelegramMessage(state.telegramChatId, state.lastMenuMessageId, msg, getKeyboard());
-    }
-    if (!success) {
-      const newId = await sendTelegramMessage(state.telegramChatId, msg, getKeyboard());
-      if (newId) { state.lastMenuMessageId = newId; saveSession(); }
-    }
-  }
+  // Меню отправляется из sendStartupMenu() в main() — здесь не дублируем.
 
   state.telegramPollingActive = true;
 
@@ -2502,6 +2509,12 @@ async function sendStartupMenu() {
     log('sendStartupMenu: пропуск (нет chatId или token)');
     return;
   }
+  // Не отправлять дважды в течение 60 секунд (защита от дублей при перезапуске)
+  if (Date.now() - state.lastStartupMenuTime < 60000) {
+    log('sendStartupMenu: пропуск (уже отправлено недавно)');
+    return;
+  }
+  state.lastStartupMenuTime = Date.now();
   log('sendStartupMenu: отправка меню в чат', state.telegramChatId);
   const text = '🔄 <b>AutoClick перезапущен</b>\n\n' + getStatusText();
   const newId = await sendTelegramMessage(state.telegramChatId, text, getKeyboard());
