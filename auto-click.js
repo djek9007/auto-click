@@ -215,6 +215,8 @@ const state = {
   telegramPollingActive: false,
   lastStartupMenuTime: 0,
   telegramConflictUntil: 0, // timestamp до которого не пытаемся стать активными при 409
+  browserWatcherTimer: null,
+  browserWatcherLastFound: new Set(),
 };
 
 // ─── Utilities ─────────────────────────────────────────────────────────────────
@@ -2503,6 +2505,8 @@ async function startAutoClick() {
         notifyTelegram('❌ Критическая ошибка активности: ' + err.message).catch(() => {});
       }
     });
+
+    startBrowserWatcher();
   } catch (err) {
     log('Ошибка запуска:', err.message);
     // Скриншот при ошибке запуска для диагностики
@@ -2526,12 +2530,36 @@ async function stopAutoClick() {
   state.isRunning = false;
   state.nextClickTime = null;
   state.activityPromise = null;
+  stopBrowserWatcher();
   if (state.browser) {
     try { await state.browser.close(); } catch {}
     state.browser = null;
     state.page = null;
   }
   log('AutoClick остановлен');
+}
+
+// Пока идёт учёт — следим, не открыл ли кто-то на этой машине обычный браузер
+// (значит, за компом реальный пользователь). Уведомляем один раз на появление,
+// не спамим, пока он не закроется и не откроется заново.
+function startBrowserWatcher() {
+  if (state.browserWatcherTimer) clearInterval(state.browserWatcherTimer);
+  state.browserWatcherLastFound = new Set();
+  state.browserWatcherTimer = setInterval(() => {
+    const found = new Set(detectOtherBrowsers());
+    const isNew = [...found].some(name => !state.browserWatcherLastFound.has(name));
+    if (isNew) {
+      notifyTelegram(`⚠️ На машине <b>${CONFIG.machineName}</b> обнаружен открытый браузер: <b>${[...found].join(', ')}</b>\n\nВозможно, за компьютером сейчас реальный пользователь.`).catch(() => {});
+    }
+    state.browserWatcherLastFound = found;
+  }, 60000);
+}
+
+function stopBrowserWatcher() {
+  if (state.browserWatcherTimer) {
+    clearInterval(state.browserWatcherTimer);
+    state.browserWatcherTimer = null;
+  }
 }
 
 // ─── macOS: не даём системе уснуть, пока жив процесс бота ─────────────────────
