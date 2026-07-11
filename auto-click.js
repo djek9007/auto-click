@@ -2588,8 +2588,14 @@ function startBrowserWatcher() {
   state.browserWatcherTimer = setInterval(() => {
     const found = new Set(detectOtherBrowsers());
     const isNew = [...found].some(name => !state.browserWatcherLastFound.has(name));
-    if (isNew) {
-      notifyTelegram(`⚠️ На машине <b>${CONFIG.machineName}</b> обнаружен открытый браузер: <b>${[...found].join(', ')}</b>\n\nВозможно, за компьютером сейчас реальный пользователь.`).catch(() => {});
+    if (isNew && state.telegramChatId) {
+      const text = `⚠️ На машине <b>${CONFIG.machineName}</b> обнаружен открытый браузер: <b>${[...found].join(', ')}</b>\n\n` +
+        `Возможно, за компьютером сейчас реальный пользователь.`;
+      const kb = [
+        [{ text: '⏹ Остановить здесь', callback_data: 'stop' }],
+        [{ text: '🖥️ Переключиться на другую машину', callback_data: 'instances' }],
+      ];
+      sendTelegramMessage(state.telegramChatId, text, kb).catch(() => {});
     }
     state.browserWatcherLastFound = found;
   }, 60000);
