@@ -456,9 +456,13 @@ function startGistWatcher() {
           log('Нет активной машины, но Telegram конфликт — пропускаю (backoff)');
           return;
         }
+        if (detectOtherBrowsers().length > 0) {
+          log('Нет активной машины, но на этой открыт браузер (реальный пользователь) — не берём на себя');
+          return;
+        }
         await sleep(getRandomInt(500, 3000));
         const recheck = await readGist();
-        if (recheck && !recheck.active) {
+        if (recheck && !recheck.active && detectOtherBrowsers().length === 0) {
           log('Нет активной машины — беру Telegram на себя');
           state.machineRole = 'active';
           await claimActive();
@@ -471,10 +475,14 @@ function startGistWatcher() {
           log(`Машина ${lock.active} stale, но Telegram конфликт — пропускаю (backoff)`);
           return;
         }
+        if (detectOtherBrowsers().length > 0) {
+          log('Кандидат на реклейм, но на этой машине открыт браузер — пропускаю');
+          return;
+        }
         log(`Машина ${lock.active} не подтвердила активность (офлайн?), забираю себе`);
         await sleep(getRandomInt(500, 3000));
         const recheck = await readGist();
-        if (recheck && recheck.active === lock.active && isAssignedActiveStale(recheck)) {
+        if (recheck && recheck.active === lock.active && isAssignedActiveStale(recheck) && detectOtherBrowsers().length === 0) {
           state.machineRole = 'active';
           await claimActive();
           startTelegramPolling();
