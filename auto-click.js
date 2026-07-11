@@ -214,6 +214,7 @@ const state = {
   updateAppliedAt:    _savedSession.updateAppliedAt || null,
   telegramPollingActive: false,
   lastStartupMenuTime: 0,
+  telegramConflictUntil: 0, // timestamp до которого не пытаемся стать активными при 409
 };
 
 // ─── Utilities ─────────────────────────────────────────────────────────────────
@@ -420,22 +421,24 @@ function startGistWatcher() {
           await startAutoClick();
         }
       } else if (lock.active && lock.active !== CONFIG.machineName && state.machineRole === 'active') {
-        // Активность передали другой машине, но именно эта не поймала команду
-        // переключения (например, кнопку в Telegram обработала машина-получатель) —
-        // самостоятельно уходим в standby, чтобы не считать дважды.
+        // Активность передали другой машине — уходим в standby.
         log(`Активность передана машине ${lock.active}, ухожу в standby`);
         await stopAutoClick();
         const demotedChatId = state.telegramChatId;
         stopTelegramPolling();
         state.machineRole = 'standby';
+        // Backoff: не пытаемся стать активными 5 минут, чтобы не было цикла
+        state.telegramConflictUntil = Date.now() + 5 * 60 * 1000;
         await sendTelegramMessage(demotedChatId,
           `⏸ Эта машина (${CONFIG.machineName}) переведена в режим ожидания.\n` +
           `Активная машина: <b>${lock.active}</b>`
         ).catch(() => {});
       } else if (!lock.active && state.machineRole !== 'active') {
-        // Никто не активен (например, после ⏹ Остановить учёт) — иначе Telegram
-        // слушать некому. Берём на себя, с небольшой задержкой против гонки,
-        // если сразу несколько машин заметят это одновременно.
+        // Никто не активен — берём на себя, если не в backoff после конфликта Telegram.
+        if (Date.now() < state.telegramConflictUntil) {
+          log('Нет активной машины, но Telegram конфликт — пропускаю (backoff)');
+          return;
+        }
         await sleep(getRandomInt(500, 3000));
         const recheck = await readGist();
         if (recheck && !recheck.active) {
@@ -446,8 +449,11 @@ function startGistWatcher() {
           await sendStartupMenu();
         }
       } else if (lock.active && lock.active !== CONFIG.machineName && state.machineRole !== 'active' && isAssignedActiveStale(lock)) {
-        // Активность назначена другой машине, но та её не подтвердила (офлайн/не
-        // запущена) дольше 90 сек — не ждём вечно, забираем себе.
+        // Активность назначена другой машине, но та не подтвердила >90 сек.
+        if (Date.now() < state.telegramConflictUntil) {
+          log(`Машина ${lock.active} stale, но Telegram конфликт — пропускаю (backoff)`);
+          return;
+        }
         log(`Машина ${lock.active} не подтвердила активность (офлайн?), забираю себе`);
         await sleep(getRandomInt(500, 3000));
         const recheck = await readGist();
@@ -1021,9 +1027,20 @@ async function handleUpdateCode(chatId, msgId, broadcast = true) {
     state.updateAppliedAt = requestedAt;
     saveSession();
     try {
-      const lock = await readGist() || { active: null, telegramOffset: 0, machines: {} };
-      lock.updateRequested = requestedAt;
-      await writeGist(lock);
+      // Gist PATCH заменяет файл целиком — heartbeat другой машины может затереть
+      // наш флаг. Повторяем запись с проверкой, пока флаг не закрепится.
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const lock = await readGist() || { active: null, telegramOffset: 0, machines: {} };
+        lock.updateRequested = requestedAt;
+        await writeGist(lock);
+        await sleep(3000);
+        const check = await readGist();
+        if (check && check.updateRequested === requestedAt) {
+          log(`Флаг обновления закреплён в Gist (попытка ${attempt + 1})`);
+          break;
+        }
+        log(`Флаг обновления затёрся heartbeat, повтор (попытка ${attempt + 1})`);
+      }
     } catch (err) {
       log('Не удалось разослать запрос обновления:', err.message);
     }
@@ -1407,7 +1424,10 @@ async function pollTelegram() {
 
     if (!data.ok) {
       if (data.description && data.description.includes('conflict')) {
-        log('⚠️ Ошибка Telegram: обнаружен конфликт (409). Похоже, запущен другой экземпляр бота с тем же токеном!');
+        log('⚠️ Конфликт Telegram (409) — другой экземпляр слушает тот же токен. Ухожу в standby на 5 мин.');
+        state.telegramConflictUntil = Date.now() + 5 * 60 * 1000;
+        stopTelegramPolling();
+        state.machineRole = 'standby';
       } else {
         log('Ошибка Telegram API:', data.description || 'Неизвестная ошибка');
       }
@@ -2539,8 +2559,8 @@ async function sendStartupMenu() {
     log('sendStartupMenu: пропуск (нет chatId или token)');
     return;
   }
-  // Не отправлять дважды в течение 60 секунд (защита от дублей при перезапуске)
-  if (Date.now() - state.lastStartupMenuTime < 60000) {
+  // Не отправлять дважды в течение 5 минут (защита от каскада при перезапуске)
+  if (Date.now() - state.lastStartupMenuTime < 5 * 60 * 1000) {
     log('sendStartupMenu: пропуск (уже отправлено недавно)');
     return;
   }
