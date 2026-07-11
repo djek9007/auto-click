@@ -471,6 +471,11 @@ const BOT_COMMANDS = '/start — Показать меню\n/stop — Остан
 function getKeyboard() {
   const kb = [];
 
+  // Всегда первой строкой — однозначный ответ "какая машина активна сейчас"
+  // (свежее чтение из gist), чтобы не путаться в старых сообщениях в чате,
+  // где у каждой машины могла быть своя устаревшая метка "(Активна)".
+  kb.push([{ text: '🖥️ Кто активен? / Список машин', callback_data: 'instances' }]);
+
   if (state.machineRole === 'active') {
     if (state.isRunning) {
       kb.push([{ text: '⏹ Остановить учёт', callback_data: 'stop' }]);
@@ -480,22 +485,20 @@ function getKeyboard() {
       ]);
       kb.push([
         { text: '🔄 Перезапустить', callback_data: 'restart' },
-        { text: '🖥️ Машины', callback_data: 'instances' },
+        { text: '🔽 Обновить код', callback_data: 'update_code' },
       ]);
     } else {
       kb.push([{ text: '▶️ Запустить учёт', callback_data: 'start' }]);
-      kb.push([{ text: '📊 Статус', callback_data: 'status' }]);
       kb.push([
-        { text: '🖥️ Машины', callback_data: 'instances' },
+        { text: '📊 Статус', callback_data: 'status' },
         { text: '🔽 Обновить код', callback_data: 'update_code' },
       ]);
     }
   } else {
     // standby — показать кнопку переключения
     kb.push([{ text: `🔄 Переключиться на ${CONFIG.machineName}`, callback_data: `switch_${CONFIG.machineName}` }]);
-    kb.push([{ text: '📊 Статус', callback_data: 'status' }]);
     kb.push([
-      { text: '🖥️ Машины', callback_data: 'instances' },
+      { text: '📊 Статус', callback_data: 'status' },
       { text: '🔽 Обновить код', callback_data: 'update_code' },
     ]);
   }
