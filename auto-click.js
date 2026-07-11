@@ -531,7 +531,10 @@ function detectOtherBrowsers() {
     ];
     const found = new Set();
     for (const line of out.split('\n')) {
-      if (line.includes('Helper') || line.includes('--type=') || line.includes('--headless')) continue;
+      // Пропускаем headless, helper-процессы и процессы Puppeteer
+      if (line.includes('Helper') || line.includes('--type=') ||
+          line.includes('--headless') || line.includes('puppeteer') ||
+          line.includes('chromium') || line.includes('Chrome for Testing')) continue;
       for (const [name, bin] of apps) {
         if (line.includes(`/${name}.app/Contents/MacOS/${bin}`)) found.add(name);
       }
@@ -655,7 +658,12 @@ async function doStartAutoClick(chatId, messageId) {
   await sendMainMenu(chatId, '🔄 Запускаю браузер...', messageId);
   const startTargetId = messageId || state.lastMenuMessageId;
   startAutoClick().then(() => {
-    const msg = (state.isRunning && state.browser) ? '✅ Учёт запущен' : '❌ Ошибка запуска';
+    // Дополнительная проверка: браузер жив и подключён
+    const browserAlive = state.browser && typeof state.browser.isConnected === 'function'
+      ? state.browser.isConnected() : !!state.browser;
+    const msg = (state.isRunning && state.browser && browserAlive)
+      ? '✅ Учёт запущен'
+      : '❌ Ошибка запуска — браузер не запустился';
     return sendMainMenu(chatId, msg, startTargetId);
   }).catch((err) => log('handleStart bg error:', err.message));
 }
@@ -934,6 +942,23 @@ async function handleSwitchMachine(chatId, messageId, targetName) {
     return;
   }
 
+  // Проверяем, онлайн ли целевая машина
+  const targetMachine = lock.machines && lock.machines[targetName];
+  if (!targetMachine) {
+    await sendMainMenu(chatId, `❌ Машина <b>${targetName}</b> не найдена в реестре`, messageId);
+    return;
+  }
+  const targetLastSeen = new Date(targetMachine.lastSeen);
+  const targetAgo = Math.floor((Date.now() - targetLastSeen.getTime()) / 1000);
+  if (targetAgo > 120) {
+    await sendMainMenu(chatId,
+      `❌ Машина <b>${targetName}</b> офлайн (${targetAgo > 60 ? Math.floor(targetAgo / 60) + 'м' : targetAgo + 'с'} назад).\n\n` +
+      `Запустите AutoClick на ${targetName} и повторите.`,
+      messageId
+    );
+    return;
+  }
+
   lock.active = targetName;
   lock.telegramOffset = state.telegramOffset;
   if (!lock.machines) lock.machines = {};
@@ -949,7 +974,8 @@ async function handleSwitchMachine(chatId, messageId, targetName) {
   await sendTelegramMessage(state.telegramChatId,
     `✅ Переключено на <b>${targetName}</b>\n\n` +
     `Эта машина (${CONFIG.machineName}) переведена в режим ожидания.\n` +
-    `Машина ${targetName} запустится через ~30 сек.`
+    `Машина ${targetName} запустится через ~30 сек.\n\n` +
+    `Если не запустилось — напишите боту /start на машине ${targetName}.`
   );
 
   startGistWatcher();
@@ -1433,6 +1459,7 @@ async function pollTelegram() {
           case 'kill_all_others': handleKillOthers(chatId, msgId).catch(err => log('Callback kill_all_others error:', err.message)); break;
           case 'update_code': handleUpdateCode(chatId, msgId).catch(err => log('Callback update_code error:', err.message)); break;
           case 'help':        handleHelp(chatId, msgId).catch(err => log('Callback help error:', err.message)); break;
+          case 'noop':        break; // Заглушка для неактивных кнопок (⏳...)
           default:
             if (cbData.startsWith('switch_')) {
               const targetName = cbData.slice(7);
