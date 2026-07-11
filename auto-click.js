@@ -872,8 +872,12 @@ async function handleInstances(chatId, messageId) {
     text += `\nТекущая активная: <b>${lock.active || 'нет'}</b>`;
 
     const keyboard = [];
+    if (state.isRunning) {
+      // Текущая (эта же) машина — команда идёт напрямую, без gist-релея.
+      keyboard.push([{ text: `⏹ Остановить ${CONFIG.machineName} (эта)`, callback_data: 'stop' }]);
+    }
     for (const name of names) {
-      if (name === CONFIG.machineName) continue; // себя видно и так, через обычное меню
+      if (name === CONFIG.machineName) continue; // себя обработали выше
       const row = [{ text: `📊 ${name}`, callback_data: `rstatus_${name}` }];
       row.push({ text: `⏹ Стоп ${name}`, callback_data: `rstop_${name}` });
       if (name !== lock.active) row.push({ text: `🔄 Включить ${name}`, callback_data: `switch_${name}` });
