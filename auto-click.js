@@ -325,6 +325,7 @@ async function heartbeat() {
     entry.lastSeen = new Date().toISOString();
     entry.email = CONFIG.email || '';
     entry.browsers = detectOtherBrowsers();
+    entry.lastUpdateAppliedAt = state.updateAppliedAt || null;
     if (entry.status !== 'active') entry.status = 'standby';
     lock.machines[CONFIG.machineName] = entry;
     await writeGist(lock);
@@ -507,6 +508,7 @@ function getKeyboard() {
   // где у каждой машины могла быть своя устаревшая метка "(Активна)".
   kb.push([{ text: '🖥️ Кто активен? / Список машин', callback_data: 'instances' }]);
   kb.push([{ text: '👤 Где открыт браузер?', callback_data: 'browsers' }]);
+  kb.push([{ text: '📋 Статус обновления', callback_data: 'update_status' }]);
 
   if (state.machineRole === 'active') {
     if (state.isRunning) {
@@ -967,6 +969,54 @@ async function handleInstances(chatId, messageId) {
   }
 }
 
+async function handleUpdateStatus(chatId, messageId) {
+  const editId = messageId || state.lastMenuMessageId;
+  if (!CONFIG.gistId) {
+    await sendMainMenu(chatId, '❌ Недоступно (нет GIST_ID)', messageId);
+    return;
+  }
+  await heartbeat(); // своя строка всегда актуальна
+  const lock = await readGist();
+  const kb = [[{ text: '🔄 Обновить', callback_data: 'update_status' }, { text: '⬅️ Меню', callback_data: 'menu' }]];
+  if (!lock) {
+    const text = '❌ Не удалось прочитать реестр машин';
+    if (editId) await editTelegramMessage(chatId, editId, text, kb);
+    else { const n = await sendTelegramMessage(chatId, text, kb); if (n) { state.lastMenuMessageId = n; saveSession(); } }
+    return;
+  }
+
+  const machines = lock.machines || {};
+  const names = Object.keys(machines).sort();
+  let text = '🔽 <b>Статус обновления кода</b>\n\n';
+
+  if (!lock.updateRequested) {
+    text += 'Обновление ещё ни разу не запускалось (с момента как эта функция появилась).';
+  } else {
+    text += `Запрошено: ${new Date(lock.updateRequested).toLocaleString('ru-RU')}\n\n`;
+    for (const name of names) {
+      const m = machines[name];
+      const upToDate = m.lastUpdateAppliedAt === lock.updateRequested;
+      const ago = m.lastSeen ? Math.floor((Date.now() - new Date(m.lastSeen).getTime()) / 1000) : Infinity;
+      const offline = ago > 120;
+      if (upToDate) {
+        text += `✅ <b>${name}</b> — обновлено\n`;
+      } else if (offline) {
+        text += `❌ <b>${name}</b> — офлайн, не обновлено\n`;
+      } else {
+        text += `⏳ <b>${name}</b> — ещё не подтвердило (обновляется или ждёт своего тика)\n`;
+      }
+    }
+  }
+  if (names.length === 0) text += 'Нет зарегистрированных машин.';
+
+  let success = false;
+  if (editId) success = await editTelegramMessage(chatId, editId, text, kb);
+  if (!success) {
+    const n = await sendTelegramMessage(chatId, text, kb);
+    if (n) { state.lastMenuMessageId = n; saveSession(); }
+  }
+}
+
 async function handleBrowsersOverview(chatId, messageId) {
   const editId = messageId || state.lastMenuMessageId;
   if (!CONFIG.gistId) {
@@ -1240,7 +1290,7 @@ async function handleUpdateCode(chatId, msgId, broadcast = true) {
     await execCmd('npx puppeteer browsers install chrome');
 
     // Готово!
-    const successText = renderText(steps.length, '✅ <b>Обновление успешно завершено!</b>\n\nПерезапускаю бота для применения изменений...');
+    const successText = renderText(steps.length, '✅ <b>Обновление успешно завершено!</b>\n\nПерезапускаю бота для применения изменений...\n\nПроверить, где обновилось: 📋 Статус обновления в меню.');
     await editTelegramMessage(chatId, statusMsgId, successText);
 
     log('Обновление завершено. Перезапуск через 2 секунды...');
@@ -1577,6 +1627,7 @@ async function pollTelegram() {
           case 'menu':      handleShowMenu(chatId, msgId).catch(err => log('Callback menu error:', err.message)); break;
           case 'instances': handleInstances(chatId, msgId).catch(err => log('Callback instances error:', err.message)); break;
           case 'browsers':  handleBrowsersOverview(chatId, msgId).catch(err => log('Callback browsers error:', err.message)); break;
+          case 'update_status': handleUpdateStatus(chatId, msgId).catch(err => log('Callback update_status error:', err.message)); break;
           case 'kill_all_others': handleKillOthers(chatId, msgId).catch(err => log('Callback kill_all_others error:', err.message)); break;
           case 'update_code': handleUpdateCode(chatId, msgId).catch(err => log('Callback update_code error:', err.message)); break;
           case 'help':        handleHelp(chatId, msgId).catch(err => log('Callback help error:', err.message)); break;
