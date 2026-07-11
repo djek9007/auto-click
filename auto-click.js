@@ -748,6 +748,21 @@ async function handleStop(chatId, messageId) {
   await sendMainMenu(chatId, '⏹ Учёт остановлен', messageId);
 }
 
+async function handleReleaseActive(chatId, messageId) {
+  if (state.machineRole !== 'active') {
+    await sendMainMenu(chatId, '⚠️ Эта машина и так не активна', messageId);
+    return;
+  }
+  if (state.isRunning) await stopAutoClick();
+  stopTelegramPolling();
+  if (CONFIG.gistId) await releaseActive();
+  state.machineRole = 'standby';
+  await sendTelegramMessage(chatId,
+    `🔓 Активность на <b>${CONFIG.machineName}</b> освобождена.\n\n` +
+    `Открой "🖥️ Кто активен? / Список машин" и нажми "🔄 Включить" на нужной машине.`
+  ).catch(() => {});
+}
+
 async function handleStatus(chatId, messageId) {
   await sendMainMenu(chatId, null, messageId);
 }
@@ -886,7 +901,12 @@ async function handleInstances(chatId, messageId) {
     const keyboard = [];
     if (state.isRunning) {
       // Текущая (эта же) машина — команда идёт напрямую, без gist-релея.
-      keyboard.push([{ text: `⏹ Остановить ${CONFIG.machineName} (эта)`, callback_data: 'stop' }]);
+      keyboard.push([{ text: `⏹ Остановить учёт ${CONFIG.machineName} (эта)`, callback_data: 'stop' }]);
+    }
+    if (state.machineRole === 'active') {
+      // Освободить активность на этой машине, даже если клик-таймер и не запущен —
+      // иначе не на что нажать, чтобы переключиться на другую.
+      keyboard.push([{ text: `🔓 Освободить активность ${CONFIG.machineName}`, callback_data: 'release_active' }]);
     }
     for (const name of names) {
       if (name === CONFIG.machineName) continue; // себя обработали выше
@@ -1621,6 +1641,7 @@ async function pollTelegram() {
           case 'start':     handleStart(chatId, msgId).catch(err => log('Callback start error:', err.message)); break;
           case 'confirm_start': doStartAutoClick(chatId, msgId).catch(err => log('Callback confirm_start error:', err.message)); break;
           case 'stop':      handleStop(chatId, msgId).catch(err => log('Callback stop error:', err.message)); break;
+          case 'release_active': handleReleaseActive(chatId, msgId).catch(err => log('Callback release_active error:', err.message)); break;
           case 'status':    handleStatus(chatId, msgId).catch(err => log('Callback status error:', err.message)); break;
           case 'stats':     handleStats(chatId, msgId).catch(err => log('Callback stats error:', err.message)); break;
           case 'restart':   handleRestart(chatId, msgId).catch(err => log('Callback restart error:', err.message)); break;
