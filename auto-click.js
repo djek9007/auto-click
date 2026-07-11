@@ -965,6 +965,7 @@ async function handleBrowsersOverview(chatId, messageId) {
     await sendMainMenu(chatId, '❌ Недоступно (нет GIST_ID)', messageId);
     return;
   }
+  await heartbeat(); // свежие данные хотя бы по этой машине прямо сейчас, не ждём 30 сек
   const lock = await readGist();
   const kb = [[{ text: '🔄 Обновить', callback_data: 'browsers' }, { text: '⬅️ Меню', callback_data: 'menu' }]];
   if (!lock) {
