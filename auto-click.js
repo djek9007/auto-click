@@ -457,18 +457,25 @@ function startGistWatcher() {
           log('Нет активной машины, но Telegram конфликт — пропускаю (backoff)');
           return;
         }
-        if (detectOtherBrowsers().length > 0) {
-          log('Нет активной машины, но на этой открыт браузер (реальный пользователь) — не берём на себя');
-          return;
-        }
+        // Открытый браузер НЕ мешает стать слушателем Telegram (иначе бота
+        // некому будет написать вообще) — он только блокирует автозапуск клика,
+        // см. ниже и в handleStart (там живая проверка + подтверждение).
         await sleep(getRandomInt(500, 3000));
         const recheck = await readGist();
-        if (recheck && !recheck.active && detectOtherBrowsers().length === 0) {
+        if (recheck && !recheck.active) {
           log('Нет активной машины — беру Telegram на себя');
           state.machineRole = 'active';
           await claimActive();
           startTelegramPolling();
-          await sendStartupMenu();
+          const hasBrowser = detectOtherBrowsers().length > 0;
+          if (hasBrowser) {
+            await notifyTelegram(`⚠️ <b>${CONFIG.machineName}</b> стала активной, но на ней открыт браузер — учёт НЕ запущен автоматически. Нажми "▶️ Запустить учёт", чтобы подтвердить запуск вручную.`);
+          } else {
+            await sendStartupMenu();
+            if (process.env.AUTO_START === 'true') {
+              await startAutoClick();
+            }
+          }
         }
       } else if (lock.active && lock.active !== CONFIG.machineName && state.machineRole !== 'active' && isAssignedActiveStale(lock)) {
         // Активность назначена другой машине, но та не подтвердила >90 сек.
@@ -476,14 +483,10 @@ function startGistWatcher() {
           log(`Машина ${lock.active} stale, но Telegram конфликт — пропускаю (backoff)`);
           return;
         }
-        if (detectOtherBrowsers().length > 0) {
-          log('Кандидат на реклейм, но на этой машине открыт браузер — пропускаю');
-          return;
-        }
         log(`Машина ${lock.active} не подтвердила активность (офлайн?), забираю себе`);
         await sleep(getRandomInt(500, 3000));
         const recheck = await readGist();
-        if (recheck && recheck.active === lock.active && isAssignedActiveStale(recheck) && detectOtherBrowsers().length === 0) {
+        if (recheck && recheck.active === lock.active && isAssignedActiveStale(recheck)) {
           state.machineRole = 'active';
           await claimActive();
           startTelegramPolling();
