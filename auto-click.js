@@ -372,8 +372,12 @@ async function getActiveMachineName() {
 }
 
 // Назначенная активной машина не шлёт heartbeat дольше 90 сек — считаем её
-// не подтвердившей активность (офлайн/не запущена).
+// не подтвердившей активность (офлайн/не запущена). Но не во время массового
+// обновления кода (git pull + npm install + Chrome могут занять пару минут
+// на каждой машине) — иначе машины начинают перехватывать активность друг
+// у друга по кругу, пока все одновременно обновляются.
 function isAssignedActiveStale(lock) {
+  if (lock.updateRequested && Date.now() - lock.updateRequested < 5 * 60 * 1000) return false;
   const m = lock.machines && lock.machines[lock.active];
   if (!m || !m.lastSeen) return true;
   return Date.now() - new Date(m.lastSeen).getTime() > 90000;
