@@ -324,6 +324,7 @@ async function heartbeat() {
     const entry = lock.machines[CONFIG.machineName] || {};
     entry.lastSeen = new Date().toISOString();
     entry.email = CONFIG.email || '';
+    entry.browsers = detectOtherBrowsers();
     if (entry.status !== 'active') entry.status = 'standby';
     lock.machines[CONFIG.machineName] = entry;
     await writeGist(lock);
@@ -497,6 +498,7 @@ function getKeyboard() {
   // (свежее чтение из gist), чтобы не путаться в старых сообщениях в чате,
   // где у каждой машины могла быть своя устаревшая метка "(Активна)".
   kb.push([{ text: '🖥️ Кто активен? / Список машин', callback_data: 'instances' }]);
+  kb.push([{ text: '👤 Где открыт браузер?', callback_data: 'browsers' }]);
 
   if (state.machineRole === 'active') {
     if (state.isRunning) {
@@ -953,6 +955,50 @@ async function handleInstances(chatId, messageId) {
   if (editId) success = await editTelegramMessage(chatId, editId, text, keyboard);
   if (!success) {
     const n = await sendTelegramMessage(chatId, text, keyboard);
+    if (n) { state.lastMenuMessageId = n; saveSession(); }
+  }
+}
+
+async function handleBrowsersOverview(chatId, messageId) {
+  const editId = messageId || state.lastMenuMessageId;
+  if (!CONFIG.gistId) {
+    await sendMainMenu(chatId, '❌ Недоступно (нет GIST_ID)', messageId);
+    return;
+  }
+  const lock = await readGist();
+  const kb = [[{ text: '🔄 Обновить', callback_data: 'browsers' }, { text: '⬅️ Меню', callback_data: 'menu' }]];
+  if (!lock) {
+    const text = '❌ Не удалось прочитать реестр машин';
+    if (editId) await editTelegramMessage(chatId, editId, text, kb);
+    else { const n = await sendTelegramMessage(chatId, text, kb); if (n) { state.lastMenuMessageId = n; saveSession(); } }
+    return;
+  }
+
+  const machines = lock.machines || {};
+  const names = Object.keys(machines).sort();
+  let text = '👤 <b>Где сейчас открыт браузер (реальный пользователь)</b>\n\n';
+  let anyFound = false;
+
+  for (const name of names) {
+    const m = machines[name];
+    const browsers = m.browsers || [];
+    const ago = m.lastSeen ? Math.floor((Date.now() - new Date(m.lastSeen).getTime()) / 1000) : Infinity;
+    const stale = ago > 120;
+    if (browsers.length > 0) {
+      anyFound = true;
+      text += `⚠️ <b>${name}</b>: ${browsers.join(', ')}${stale ? ' (данные устарели)' : ''}\n`;
+    } else {
+      text += `✅ <b>${name}</b>: чисто${stale ? ' (офлайн/устарело)' : ''}\n`;
+    }
+  }
+
+  if (names.length === 0) text += 'Нет зарегистрированных машин.';
+  if (!anyFound && names.length > 0) text += '\nНи на одной машине браузер не обнаружен.';
+
+  let success = false;
+  if (editId) success = await editTelegramMessage(chatId, editId, text, kb);
+  if (!success) {
+    const n = await sendTelegramMessage(chatId, text, kb);
     if (n) { state.lastMenuMessageId = n; saveSession(); }
   }
 }
@@ -1521,6 +1567,7 @@ async function pollTelegram() {
           case 'restart':   handleRestart(chatId, msgId).catch(err => log('Callback restart error:', err.message)); break;
           case 'menu':      handleShowMenu(chatId, msgId).catch(err => log('Callback menu error:', err.message)); break;
           case 'instances': handleInstances(chatId, msgId).catch(err => log('Callback instances error:', err.message)); break;
+          case 'browsers':  handleBrowsersOverview(chatId, msgId).catch(err => log('Callback browsers error:', err.message)); break;
           case 'kill_all_others': handleKillOthers(chatId, msgId).catch(err => log('Callback kill_all_others error:', err.message)); break;
           case 'update_code': handleUpdateCode(chatId, msgId).catch(err => log('Callback update_code error:', err.message)); break;
           case 'help':        handleHelp(chatId, msgId).catch(err => log('Callback help error:', err.message)); break;
