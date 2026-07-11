@@ -217,6 +217,7 @@ const state = {
   telegramConflictUntil: 0, // timestamp до которого не пытаемся стать активными при 409
   browserWatcherTimer: null,
   browserWatcherLastFound: new Set(),
+  lastRemoteCommandAt: null,
 };
 
 // ─── Utilities ─────────────────────────────────────────────────────────────────
@@ -410,6 +411,19 @@ function startGistWatcher() {
         handleUpdateCode(state.telegramChatId, null, false)
           .catch(err => log('Auto-update error:', err.message));
         return;
+      }
+
+      // Удалённая команда (📊 статус / ⏹ стоп), адресованная именно этой машине,
+      // без смены активной — отвечаем прямо в чат, откуда её отправили.
+      const rc = lock.remoteCommand;
+      if (rc && rc.target === CONFIG.machineName && rc.requestedAt !== state.lastRemoteCommandAt) {
+        state.lastRemoteCommandAt = rc.requestedAt;
+        if (rc.type === 'stop') {
+          if (state.isRunning) await stopAutoClick();
+          await sendTelegramMessage(rc.chatId, `⏹ <b>${CONFIG.machineName}</b>: учёт остановлен (удалённо)\n\n${getStatusText()}`).catch(() => {});
+        } else if (rc.type === 'status') {
+          await sendTelegramMessage(rc.chatId, getStatusText()).catch(() => {});
+        }
       }
 
       if (lock.active === CONFIG.machineName && state.machineRole !== 'active') {
@@ -859,9 +873,11 @@ async function handleInstances(chatId, messageId) {
 
     const keyboard = [];
     for (const name of names) {
-      if (name !== lock.active) {
-        keyboard.push([{ text: `🔄 Включить ${name}`, callback_data: `switch_${name}` }]);
-      }
+      if (name === CONFIG.machineName) continue; // себя видно и так, через обычное меню
+      const row = [{ text: `📊 ${name}`, callback_data: `rstatus_${name}` }];
+      row.push({ text: `⏹ Стоп ${name}`, callback_data: `rstop_${name}` });
+      if (name !== lock.active) row.push({ text: `🔄 Включить ${name}`, callback_data: `switch_${name}` });
+      keyboard.push(row);
     }
     // Если текущая машина standby — добавить кнопку "Запустить здесь"
     if (lock.active && lock.active !== CONFIG.machineName && state.machineRole !== 'active') {
@@ -935,6 +951,26 @@ async function handleInstances(chatId, messageId) {
     const n = await sendTelegramMessage(chatId, text, keyboard);
     if (n) { state.lastMenuMessageId = n; saveSession(); }
   }
+}
+
+// Команда на конкретную (не обязательно активную) машину, без смены active —
+// целевая машина сама выполнит и отчитается в тот же чат (chatId кладём в
+// саму команду, чтобы не зависеть от того, знает ли она chatId локально).
+async function handleRemoteCommand(chatId, messageId, type, targetName) {
+  if (!CONFIG.gistId) {
+    await sendMainMenu(chatId, '❌ Удалённое управление недоступно (нет GIST_ID)', messageId);
+    return;
+  }
+  const label = type === 'stop' ? 'Остановить' : 'Статус';
+  const text = `⏳ Команда «${label}» отправлена на <b>${targetName}</b>, жду ответа (до ~30 сек)...`;
+  const kb = [[{ text: '⬅️ Меню', callback_data: 'menu' }]];
+  const editId = messageId || state.lastMenuMessageId;
+  if (editId) await editTelegramMessage(chatId, editId, text, kb);
+  else { const n = await sendTelegramMessage(chatId, text, kb); if (n) { state.lastMenuMessageId = n; saveSession(); } }
+
+  const lock = await readGist() || { active: null, telegramOffset: 0, machines: {} };
+  lock.remoteCommand = { type, target: targetName, chatId, requestedAt: Date.now() };
+  await writeGist(lock);
 }
 
 async function handleSwitchMachine(chatId, messageId, targetName) {
@@ -1489,6 +1525,10 @@ async function pollTelegram() {
             if (cbData.startsWith('switch_')) {
               const targetName = cbData.slice(7);
               handleSwitchMachine(chatId, msgId, targetName).catch(err => log('Callback switch error:', err.message));
+            } else if (cbData.startsWith('rstatus_')) {
+              handleRemoteCommand(chatId, msgId, 'status', cbData.slice(8)).catch(err => log('Callback rstatus error:', err.message));
+            } else if (cbData.startsWith('rstop_')) {
+              handleRemoteCommand(chatId, msgId, 'stop', cbData.slice(6)).catch(err => log('Callback rstop error:', err.message));
             } else if (cbData.startsWith('kill_')) {
               const pid = parseInt(cbData.slice(5));
               handleKillPid(chatId, msgId, pid).catch(err => log('Callback kill_pid error:', err.message));
