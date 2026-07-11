@@ -754,13 +754,16 @@ async function handleReleaseActive(chatId, messageId) {
     return;
   }
   if (state.isRunning) await stopAutoClick();
-  stopTelegramPolling();
+  // Поллинг НЕ останавливаем — иначе некому будет обработать следующее нажатие
+  // "Включить X". Эта машина сама уйдёт с приёма, как только реально передаст
+  // управление (handleSwitchMachine) или увидит, что активной стала другая.
   if (CONFIG.gistId) await releaseActive();
   state.machineRole = 'standby';
-  await sendTelegramMessage(chatId,
+  await sendMainMenu(chatId,
     `🔓 Активность на <b>${CONFIG.machineName}</b> освобождена.\n\n` +
-    `Открой "🖥️ Кто активен? / Список машин" и нажми "🔄 Включить" на нужной машине.`
-  ).catch(() => {});
+    `Открой "🖥️ Кто активен? / Список машин" и нажми "🔄 Включить" на нужной машине.`,
+    messageId
+  );
 }
 
 async function handleStatus(chatId, messageId) {
