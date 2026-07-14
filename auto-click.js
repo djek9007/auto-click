@@ -315,22 +315,38 @@ async function registerMachine() {
   log(`Машина ${CONFIG.machineName} зарегистрирована в Gist`);
 }
 
+// Gist — общий файл без блокировок: если две машины пишут почти одновременно,
+// одна перезатирает lastSeen другой (read-modify-write без синхронизации), и
+// та ложно считается "зависшей" через isAssignedActiveStale(). Поэтому после
+// записи перепроверяем, что наш lastSeen действительно сохранился, и повторяем
+// при коллизии — иначе активная машина время от времени "теряет" heartbeat и
+// её роль перехватывает другая.
 async function heartbeat() {
   if (!CONFIG.gistId) return;
-  try {
-    const lock = await readGist();
-    if (!lock) return;
-    if (!lock.machines) lock.machines = {};
-    const entry = lock.machines[CONFIG.machineName] || {};
-    entry.lastSeen = new Date().toISOString();
-    entry.email = CONFIG.email || '';
-    entry.browsers = detectOtherBrowsers();
-    entry.lastUpdateAppliedAt = state.updateAppliedAt || null;
-    if (entry.status !== 'active') entry.status = 'standby';
-    lock.machines[CONFIG.machineName] = entry;
-    await writeGist(lock);
-  } catch (err) {
-    log('Heartbeat error:', err.message);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const lock = await readGist();
+      if (!lock) return;
+      if (!lock.machines) lock.machines = {};
+      const entry = lock.machines[CONFIG.machineName] || {};
+      const now = new Date().toISOString();
+      entry.lastSeen = now;
+      entry.email = CONFIG.email || '';
+      entry.browsers = detectOtherBrowsers();
+      entry.lastUpdateAppliedAt = state.updateAppliedAt || null;
+      if (entry.status !== 'active') entry.status = 'standby';
+      lock.machines[CONFIG.machineName] = entry;
+      await writeGist(lock);
+
+      const check = await readGist();
+      const savedSeen = check && check.machines && check.machines[CONFIG.machineName] && check.machines[CONFIG.machineName].lastSeen;
+      if (savedSeen === now) return;
+      log(`Heartbeat: коллизия записи в Gist, повтор (попытка ${attempt + 1})`);
+      await sleep(getRandomInt(300, 1200));
+    } catch (err) {
+      log('Heartbeat error:', err.message);
+      return;
+    }
   }
 }
 
@@ -1358,26 +1374,16 @@ async function handleStats(chatId, messageId) {
     }
   };
 
-  // Если учёт не запущен — поднимаем временный браузер только для чтения статистики,
-  // не трогая state.isRunning/activityLoop (чтобы не засчитывать время как активное)
-  let tempBrowser = null;
-  let page = isPageValid() ? state.page : null;
-
-  if (!page) {
-    await reply(text + '⏳ Открываю браузер для чтения статистики...', null);
-    try {
-      tempBrowser = await launchBrowser(false);
-      page = await tempBrowser.newPage();
-      await setupPage(page);
-      await login(page);
-    } catch (err) {
-      log('Stats: ошибка временного браузера:', err.message);
-      text += '❌ Не удалось получить статистику: ' + err.message;
-      await reply(text, getKeyboard());
-      if (tempBrowser) { try { await tempBrowser.close(); } catch {} }
-      return;
-    }
+  if (!isPageValid()) {
+    // Страница отсоединена — сбросить состояние и сообщить пользователю.
+    // Второй Chrome с отдельным логином здесь не поднимаем: сайт учёта держит одну
+    // сессию на аккаунт, и параллельный логин обрывает уже работающую сессию трекинга.
+    state.page = null;
+    text += '❌ Браузер не запущен.\nСначала нажмите <b>▶️ Запустить учёт</b>';
+    await reply(text, getKeyboard());
+    return;
   }
+  const page = state.page;
 
   try {
     // SPA — клики меняют контент без смены URL, поэтому всегда возвращаемся на главную
@@ -1472,14 +1478,12 @@ async function handleStats(chatId, messageId) {
     }
   } catch (err) {
     log('handleStats error:', err.message);
-    if (!tempBrowser && (err.message.includes('detached') || err.message.includes('closed'))) {
+    if (err.message.includes('detached') || err.message.includes('closed')) {
       state.page = null;
       text += '❌ Страница была закрыта. Нажмите <b>🔄 Перезапустить</b>.';
     } else {
       text += '❌ Ошибка: ' + err.message;
     }
-  } finally {
-    if (tempBrowser) { try { await tempBrowser.close(); } catch {} }
   }
 
   await reply(text, getKeyboard());
@@ -1809,7 +1813,7 @@ async function takeScreenshot(page, label) {
 }
 
 // ─── Puppeteer — Browser ───────────────────────────────────────────────────────
-async function launchBrowser(storeInState = true) {
+async function launchBrowser() {
   let puppeteer;
   try {
     puppeteer = require('puppeteer');
@@ -1884,7 +1888,7 @@ async function launchBrowser(storeInState = true) {
     }
   }
 
-  if (storeInState) state.browser = browser;
+  state.browser = browser;
   log('Браузер запущен');
 
   // Grant geolocation permission for target URL
