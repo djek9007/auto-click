@@ -1374,16 +1374,27 @@ async function handleStats(chatId, messageId) {
     }
   };
 
-  if (!isPageValid()) {
-    // Страница отсоединена — сбросить состояние и сообщить пользователю.
-    // Второй Chrome с отдельным логином здесь не поднимаем: сайт учёта держит одну
-    // сессию на аккаунт, и параллельный логин обрывает уже работающую сессию трекинга.
-    state.page = null;
-    text += '❌ Браузер не запущен.\nСначала нажмите <b>▶️ Запустить учёт</b>';
-    await reply(text, getKeyboard());
-    return;
+  // Если учёт не запущен — поднимаем отдельный временный браузер только для чтения
+  // статистики (сайт разрешает смотреть её без активной сессии учёта), не трогая
+  // state.isRunning/activityLoop, и закрываем его сразу после чтения.
+  let tempBrowser = null;
+  let page = isPageValid() ? state.page : null;
+
+  if (!page) {
+    await reply(text + '⏳ Открываю браузер для чтения статистики...', null);
+    try {
+      tempBrowser = await launchBrowser(false);
+      page = await tempBrowser.newPage();
+      await setupPage(page);
+      await login(page, true);
+    } catch (err) {
+      log('Stats: ошибка временного браузера:', err.message);
+      text += '❌ Не удалось получить статистику: ' + err.message;
+      await reply(text, getKeyboard());
+      if (tempBrowser) { try { await tempBrowser.close(); } catch {} }
+      return;
+    }
   }
-  const page = state.page;
 
   try {
     // SPA — клики меняют контент без смены URL, поэтому всегда возвращаемся на главную
@@ -1478,12 +1489,14 @@ async function handleStats(chatId, messageId) {
     }
   } catch (err) {
     log('handleStats error:', err.message);
-    if (err.message.includes('detached') || err.message.includes('closed')) {
+    if (!tempBrowser && (err.message.includes('detached') || err.message.includes('closed'))) {
       state.page = null;
       text += '❌ Страница была закрыта. Нажмите <b>🔄 Перезапустить</b>.';
     } else {
       text += '❌ Ошибка: ' + err.message;
     }
+  } finally {
+    if (tempBrowser) { try { await tempBrowser.close(); } catch {} }
   }
 
   await reply(text, getKeyboard());
@@ -1813,7 +1826,7 @@ async function takeScreenshot(page, label) {
 }
 
 // ─── Puppeteer — Browser ───────────────────────────────────────────────────────
-async function launchBrowser() {
+async function launchBrowser(storeInState = true) {
   let puppeteer;
   try {
     puppeteer = require('puppeteer');
@@ -1888,7 +1901,7 @@ async function launchBrowser() {
     }
   }
 
-  state.browser = browser;
+  if (storeInState) state.browser = browser;
   log('Браузер запущен');
 
   // Grant geolocation permission for target URL
@@ -1976,7 +1989,7 @@ async function setupPage(page) {
 }
 
 // ─── Authentication ────────────────────────────────────────────────────────────
-async function login(page) {
+async function login(page, silent = false) {
   log('Проверка авторизации...');
 
   // Переход на страницу с обработкой ошибок навигации
@@ -2161,7 +2174,7 @@ async function login(page) {
     const loggedIn = await checkLoggedIn(page);
     if (loggedIn) {
       log('Авторизация успешна');
-      await notifyTelegram('🔓 Успешный вход в систему');
+      if (!silent) await notifyTelegram('🔓 Успешный вход в систему');
       return true;
     }
   }
