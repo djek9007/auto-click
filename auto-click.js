@@ -1358,22 +1358,35 @@ async function handleStats(chatId, messageId) {
     }
   };
 
-  if (!isPageValid()) {
-    // Страница отсоединена — сбросить состояние и сообщить пользователю
-    state.page = null;
-    text += '❌ Браузер не запущен.\nСначала нажмите <b>▶️ Запустить учёт</b>';
-    await reply(text, getKeyboard());
-    return;
+  // Если учёт не запущен — поднимаем временный браузер только для чтения статистики,
+  // не трогая state.isRunning/activityLoop (чтобы не засчитывать время как активное)
+  let tempBrowser = null;
+  let page = isPageValid() ? state.page : null;
+
+  if (!page) {
+    await reply(text + '⏳ Открываю браузер для чтения статистики...', null);
+    try {
+      tempBrowser = await launchBrowser(false);
+      page = await tempBrowser.newPage();
+      await setupPage(page);
+      await login(page);
+    } catch (err) {
+      log('Stats: ошибка временного браузера:', err.message);
+      text += '❌ Не удалось получить статистику: ' + err.message;
+      await reply(text, getKeyboard());
+      if (tempBrowser) { try { await tempBrowser.close(); } catch {} }
+      return;
+    }
   }
 
   try {
     // SPA — клики меняют контент без смены URL, поэтому всегда возвращаемся на главную
     log('Stats: переход на главную для получения статистики');
-    await state.page.goto(CONFIG.targetUrl, { waitUntil: 'networkidle0', timeout: 20000 });
+    await page.goto(CONFIG.targetUrl, { waitUntil: 'networkidle0', timeout: 20000 });
     await sleep(3000);
 
     // Проверка: не выкинуло ли на страницу логина (сессия истекла)
-    const isLoggedIn = await checkLoggedIn(state.page);
+    const isLoggedIn = await checkLoggedIn(page);
     if (!isLoggedIn) {
       text += '⚠️ Сессия истекла. Статистика недоступна до перезапуска учёта.\n' +
               'Нажмите <b>🔄 Перезапустить</b> для входа заново.';
@@ -1384,7 +1397,7 @@ async function handleStats(chatId, messageId) {
     // Ждём загрузки блока со временем (сайт может показывать "загружается" пока не придёт API-ответ)
     let dataReady = false;
     for (let i = 0; i < 12; i++) {
-      const ready = await state.page.evaluate(() => {
+      const ready = await page.evaluate(() => {
         const t = document.body.innerText;
         return /сегодня[\s\S]{0,60}\d/i.test(t) || /за неделю[\s\S]{0,60}\d/i.test(t);
       }).catch(() => false);
@@ -1396,18 +1409,18 @@ async function handleStats(chatId, messageId) {
     if (!dataReady) {
       // Если данных всё ещё нет — возможно, страница не загрузилась или изменилась.
       // Показываем сырой текст для диагностики
-      const rawText = await state.page.evaluate(() => {
+      const rawText = await page.evaluate(() => {
         return (document.body.innerText || '').replace(/\s+/g, ' ').trim();
       }).catch(() => '—');
       log('Stats: данные не найдены, raw:', rawText.slice(0, 400));
-      await takeScreenshot(state.page, 'stats_no_data');
+      await takeScreenshot(page, 'stats_no_data');
       text += '⚠️ Данные статистики не обнаружены.\n\n<b>Текст страницы:</b>\n<code>';
       text += (rawText || '—').slice(0, 400) + '</code>';
       await reply(text, getKeyboard());
       return;
     }
 
-    const data = await state.page.evaluate(() => {
+    const data = await page.evaluate(() => {
       // Нормализуем все переносы строк в пробелы — иначе регулярки не матчатся через \n
       const raw = document.body.innerText.replace(/\s+/g, ' ').trim();
       const r = {};
@@ -1459,12 +1472,14 @@ async function handleStats(chatId, messageId) {
     }
   } catch (err) {
     log('handleStats error:', err.message);
-    if (err.message.includes('detached') || err.message.includes('closed')) {
+    if (!tempBrowser && (err.message.includes('detached') || err.message.includes('closed'))) {
       state.page = null;
       text += '❌ Страница была закрыта. Нажмите <b>🔄 Перезапустить</b>.';
     } else {
       text += '❌ Ошибка: ' + err.message;
     }
+  } finally {
+    if (tempBrowser) { try { await tempBrowser.close(); } catch {} }
   }
 
   await reply(text, getKeyboard());
@@ -1794,7 +1809,7 @@ async function takeScreenshot(page, label) {
 }
 
 // ─── Puppeteer — Browser ───────────────────────────────────────────────────────
-async function launchBrowser() {
+async function launchBrowser(storeInState = true) {
   let puppeteer;
   try {
     puppeteer = require('puppeteer');
@@ -1869,7 +1884,7 @@ async function launchBrowser() {
     }
   }
 
-  state.browser = browser;
+  if (storeInState) state.browser = browser;
   log('Браузер запущен');
 
   // Grant geolocation permission for target URL
