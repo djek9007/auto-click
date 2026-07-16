@@ -104,10 +104,6 @@ fi
 
 echo "📄 Загрузка .env из: $ENV_FILE"
 
-# Показываем содержимое .env (без паролей)
-echo "📋 Содержимое .env:"
-grep -E "^[A-Z_]+=" "$ENV_FILE" | sed 's/PASSWORD=.*/PASSWORD=***/' | sed 's/TELEGRAM_TOKEN=.*/TELEGRAM_TOKEN=***/'
-
 # Загружаем переменные
 set -a
 source "$ENV_FILE"
@@ -115,12 +111,12 @@ set +a
 
 # Диагностика загруженных переменных
 echo "🔍 Проверка переменных после source:"
-echo "   EMAIL: ${EMAIL:-НЕ ЗАДАН}"
-echo "   PASSWORD: ${PASSWORD:+задан (длина: ${#PASSWORD})}"
-echo "   TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:+задан (длина: ${#TELEGRAM_TOKEN})}"
-echo "   CONFIG_GIST_ID: ${CONFIG_GIST_ID:-НЕ ЗАДАН}"
-echo "   GIST_ID: ${GIST_ID:-НЕ ЗАДАН}"
-echo "   GITHUB_TOKEN: ${GITHUB_TOKEN:+задан}"
+echo "   EMAIL: ${EMAIL:+задан (значение скрыто)}"
+echo "   PASSWORD: ${PASSWORD:+задан (значение скрыто)}"
+echo "   TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:+задан (значение скрыто)}"
+echo "   CONFIG_GIST_ID: ${CONFIG_GIST_ID:+задан (значение скрыто)}"
+echo "   GIST_ID: ${GIST_ID:+задан (значение скрыто)}"
+echo "   GITHUB_TOKEN: ${GITHUB_TOKEN:+задан (значение скрыто)}"
 
 if [ -z "$EMAIL" ] || [ -z "$PASSWORD" ] || [ -z "$TELEGRAM_TOKEN" ]; then
   if [ -z "$CONFIG_GIST_ID" ]; then

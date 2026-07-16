@@ -141,7 +141,7 @@ async function loadRemoteConfig() {
     return;
   }
 
-  log('Remote config: загрузка из Gist', CONFIG.configGistId);
+  log('Remote config: загрузка из Gist (ID скрыт)');
   try {
     // Config gist is public-readable — no auth needed
     const resp = await fetch(`https://api.github.com/gists/${CONFIG.configGistId}`, {
@@ -175,7 +175,7 @@ async function loadRemoteConfig() {
     }
     if (!process.env.TELEGRAM_TOKEN && remote.TELEGRAM_TOKEN) {
       CONFIG.telegramToken = remote.TELEGRAM_TOKEN;
-      log('  + TELEGRAM_TOKEN from Gist:', remote.TELEGRAM_TOKEN.slice(0, 10) + '***');
+      log('  + TELEGRAM_TOKEN from Gist: загружен');
     }
     if (!process.env.TARGET_URL && remote.TARGET_URL) CONFIG.targetUrl = remote.TARGET_URL;
     if (!process.env.MAX_HOURS && remote.MAX_HOURS) CONFIG.maxHours = parseInt(remote.MAX_HOURS, 10);
@@ -185,9 +185,9 @@ async function loadRemoteConfig() {
     if (!process.env.SLOW_MO && remote.SLOW_MO) CONFIG.slowMo = parseInt(remote.SLOW_MO, 10);
     if (!process.env.GIST_ID && remote.GIST_ID) {
       CONFIG.gistId = remote.GIST_ID;
-      log('  + GIST_ID from Gist:', remote.GIST_ID);
+      log('  + GIST_ID from Gist: загружен');
     }
-    log('After remote: email=', !!CONFIG.email, 'password=', !!CONFIG.password, 'token=', !!CONFIG.telegramToken, 'gistId=', CONFIG.gistId || 'empty');
+    log('After remote: email=', !!CONFIG.email, 'password=', !!CONFIG.password, 'token=', !!CONFIG.telegramToken, 'gistId=', !!CONFIG.gistId);
   } catch (err) {
     log('Remote config error:', err.message);
     log('Remote config: продолжение работы с локальными настройками');
@@ -223,7 +223,38 @@ const state = {
 // ─── Utilities ─────────────────────────────────────────────────────────────────
 function log(...args) {
   const ts = new Date().toISOString().replace('T', ' ').slice(0, 19);
-  console.log(`[${ts}] [AutoClick]`, ...args);
+  console.log(`[${ts}] [AutoClick]`, ...args.map(redactSecrets));
+}
+
+// Не допускаем попадания паролей, токенов и идентификаторов Gist в логи или
+// сообщения Telegram. ID конфигурационного Gist тоже скрываем: для secret Gist
+// знание ID фактически означает возможность прочитать его содержимое.
+function redactSecrets(value) {
+  if (typeof value !== 'string') return value;
+
+  let result = value;
+  const secrets = [
+    CONFIG.password,
+    CONFIG.telegramToken,
+    CONFIG.githubToken,
+    CONFIG.configGistId,
+    CONFIG.gistId,
+    process.env.PASSWORD,
+    process.env.TELEGRAM_TOKEN,
+    process.env.GITHUB_TOKEN,
+    process.env.CONFIG_GIST_ID,
+    process.env.GIST_ID,
+  ].filter(secret => typeof secret === 'string' && secret.length >= 4);
+
+  for (const secret of new Set(secrets)) {
+    result = result.split(secret).join('[СКРЫТО]');
+  }
+
+  return result
+    .replace(/\b\d{6,12}:[A-Za-z0-9_-]{20,}\b/g, '[СКРЫТО:TELEGRAM_TOKEN]')
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, '[СКРЫТО:GITHUB_TOKEN]')
+    .replace(/([?&](?:access_token|token|code)=)[^&\s]+/gi, '$1[СКРЫТО]')
+    .replace(/("(?:access_token|refresh_token|id_token|code)"\s*:\s*")[^"]+("?)/gi, '$1[СКРЫТО]$2');
 }
 
 function getRandomInt(min, max) {
@@ -1545,7 +1576,7 @@ async function setupBotCommands() {
 async function sendTelegramMessage(chatId, text, keyboard) {
   if (!CONFIG.telegramToken || !chatId) return null;
   try {
-    const body = { chat_id: chatId, text, parse_mode: 'HTML' };
+    const body = { chat_id: chatId, text: redactSecrets(String(text)), parse_mode: 'HTML' };
     if (keyboard) body.reply_markup = { inline_keyboard: keyboard };
     const resp = await fetchWithTimeout(`${getTelegramApi()}/sendMessage`, {
       method: 'POST',
@@ -1563,7 +1594,7 @@ async function sendTelegramMessage(chatId, text, keyboard) {
 async function editTelegramMessage(chatId, messageId, text, keyboard) {
   if (!CONFIG.telegramToken || !chatId || !messageId) return false;
   try {
-    const body = { chat_id: chatId, message_id: messageId, text, parse_mode: 'HTML' };
+    const body = { chat_id: chatId, message_id: messageId, text: redactSecrets(String(text)), parse_mode: 'HTML' };
     if (keyboard) body.reply_markup = { inline_keyboard: keyboard };
     const resp = await fetchWithTimeout(`${getTelegramApi()}/editMessageText`, {
       method: 'POST',
@@ -2900,7 +2931,7 @@ async function main() {
 
   // Load remote config from Gist if CONFIG_GIST_ID is set
   log('Загрузка remote config...');
-  log('CONFIG_GIST_ID:', CONFIG.configGistId || 'НЕ ЗАДАН');
+  log('CONFIG_GIST_ID:', CONFIG.configGistId ? 'задан (значение скрыто)' : 'НЕ ЗАДАН');
   try {
     await loadRemoteConfig();
     log('Remote config загружен');
