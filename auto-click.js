@@ -1840,65 +1840,73 @@ async function launchBrowser(storeInState = true) {
     );
   }
 
+  const launchOptions = {
+    headless: CONFIG.headless ? 'new' : false,
+    slowMo: CONFIG.slowMo,
+    // --single-process and --no-zygote make current Chrome builds terminate
+    // immediately on some macOS machines (exit code is null because Chrome is
+    // killed by a signal). They are not needed for a normal Puppeteer launch.
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--window-size=1280,800',
+      '--disable-blink-features=AutomationControlled',
+    ],
+  };
+
+  let executablePath;
+  try {
+    executablePath = puppeteer.executablePath();
+    log('Chrome executable:', executablePath);
+  } catch (err) {
+    log('Не удалось определить путь Chrome:', err.message);
+  }
+
+  // A cancelled download may leave the version directory behind without the
+  // executable. Puppeteer's installer then refuses to repair it by itself.
+  if (executablePath && !fs.existsSync(executablePath)) {
+    const chromeCacheDir = path.resolve(__dirname, 'node_modules', '.cache', 'puppeteer', 'chrome');
+    const relativePath = path.relative(chromeCacheDir, executablePath);
+    const versionDir = relativePath.split(path.sep)[0];
+    const brokenInstallDir = path.join(chromeCacheDir, versionDir);
+
+    if (versionDir && versionDir !== '..' && !path.isAbsolute(relativePath)) {
+      log('Удаляю незавершённую установку Chrome:', brokenInstallDir);
+      try { fs.rmSync(brokenInstallDir, { recursive: true, force: true }); } catch (err) {
+        log('Не удалось удалить повреждённый кеш Chrome:', err.message);
+      }
+    }
+
+    log('Chrome не найден, установка...');
+    const { execFileSync } = require('child_process');
+    try {
+      const npxCommand = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+      execFileSync(npxCommand, ['puppeteer', 'browsers', 'install', 'chrome'], {
+        cwd: __dirname,
+        timeout: 180000,
+        stdio: 'inherit',
+      });
+      executablePath = puppeteer.executablePath();
+      log('Chrome установлен:', executablePath);
+    } catch (installErr) {
+      throw new Error(
+        'Chrome не установлен.\n' +
+        'Выполните вручную:\n' +
+        '  cd ' + __dirname + '\n' +
+        '  npx puppeteer browsers install chrome\n\n' +
+        'Причина: ' + installErr.message
+      );
+    }
+  }
+
   let browser;
   try {
-    browser = await puppeteer.launch({
-      headless: CONFIG.headless ? 'new' : false,
-      slowMo: CONFIG.slowMo,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-zygote',
-        '--single-process',
-        '--window-size=1280,800',
-        '--disable-blink-features=AutomationControlled',
-      ],
-    });
+    browser = await puppeteer.launch(launchOptions);
   } catch (launchErr) {
-    const errMsg = launchErr.message || '';
-    const isMissing = errMsg.includes('Could not find Chrome');
-    const isFailed = errMsg.includes('Failed to launch');
-
-    if (isMissing || isFailed) {
-      log('Chrome проблема:', isMissing ? 'не найден' : 'не запускается', '- установка/переустановка...');
-
-      // Удаляем старый кеш и ставим заново
-      const { execSync } = require('child_process');
-      try {
-        execSync('npx puppeteer browsers install chrome --force', {
-          cwd: __dirname,
-          timeout: 180000,
-          stdio: 'inherit',
-        });
-      } catch (installErr) {
-        throw new Error(
-          'Chrome не установлен.\n' +
-          'Выполните вручную:\n' +
-          '  cd ' + __dirname + '\n' +
-          '  npx puppeteer browsers install chrome'
-        );
-      }
-
-      // Пробуем снова с дополнительными флагами для macOS
-      browser = await puppeteer.launch({
-        headless: CONFIG.headless ? 'new' : false,
-        slowMo: CONFIG.slowMo,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--no-zygote',
-          '--single-process',
-          '--window-size=1280,800',
-          '--disable-blink-features=AutomationControlled',
-        ],
-      });
-    } else {
-      throw launchErr;
-    }
+    log('Chrome не запустился:', launchErr.message);
+    throw launchErr;
   }
 
   if (storeInState) state.browser = browser;
