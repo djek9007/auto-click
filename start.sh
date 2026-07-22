@@ -175,28 +175,24 @@ if [ ! -d "$SCRIPT_DIR/node_modules" ]; then
   cd "$SCRIPT_DIR" && npm install --no-fund --no-audit 2>&1 | tail -3
 fi
 
-# Проверка Chrome — ищем бинарник (Chromium или Google Chrome for Testing)
-CHROME_BIN=$(find "$SCRIPT_DIR/node_modules/.cache/puppeteer" -name "Chromium" -type f 2>/dev/null | head -1)
-if [ -z "$CHROME_BIN" ]; then
-  # На macOS это может быть "Google Chrome for Testing"
-  CHROME_BIN=$(find "$SCRIPT_DIR/node_modules/.cache/puppeteer" -name "Google Chrome for Testing" -type f 2>/dev/null | head -1)
-fi
-if [ -z "$CHROME_BIN" ]; then
-  echo "🌐 Установка Chrome для Puppeteer..."
-  cd "$SCRIPT_DIR" && $NPX_BIN puppeteer browsers install chrome 2>&1 | tail -3
-  # Проверяем снова
-  CHROME_BIN=$(find "$SCRIPT_DIR/node_modules/.cache/puppeteer" -name "Chromium" -type f 2>/dev/null | head -1)
-  if [ -z "$CHROME_BIN" ]; then
-    CHROME_BIN=$(find "$SCRIPT_DIR/node_modules/.cache/puppeteer" -name "Google Chrome for Testing" -type f 2>/dev/null | head -1)
+# Проверяем путь, который реально будет использовать Puppeteer. Каталог версии
+# может остаться после оборванной загрузки, поэтому одного `npm install` мало.
+CHROME_BIN="$($NODE_BIN -e 'process.stdout.write(require("puppeteer").executablePath())' 2>/dev/null || true)"
+if [ -z "$CHROME_BIN" ] || [ ! -x "$CHROME_BIN" ]; then
+  echo "🌐 Chrome отсутствует или повреждён — переустановка..."
+  CHROME_CACHE="$SCRIPT_DIR/node_modules/.cache/puppeteer/chrome"
+  if [ -d "$CHROME_CACHE" ]; then
+    rm -rf "$CHROME_CACHE"
   fi
-  if [ -z "$CHROME_BIN" ]; then
-    echo "⚠️  Chrome не найден после установки!"
-  else
-    echo "✅ Chrome установлен: $CHROME_BIN"
-  fi
-else
-  echo "✅ Chrome найден: $CHROME_BIN"
+  cd "$SCRIPT_DIR" && "$NPX_BIN" puppeteer browsers install chrome
+  CHROME_BIN="$($NODE_BIN -e 'process.stdout.write(require("puppeteer").executablePath())' 2>/dev/null || true)"
 fi
+
+if [ -z "$CHROME_BIN" ] || [ ! -x "$CHROME_BIN" ]; then
+  echo "❌ Chrome не установлен или не исполняемый: ${CHROME_BIN:-путь не определён}"
+  exit 1
+fi
+echo "✅ Chrome готов: $CHROME_BIN"
 
 # ─── Автозапуск — пересоздаём LaunchAgent только если он изменился ───
 # ВАЖНО: launchctl load с RunAtLoad=true сразу порождает параллельный запуск
